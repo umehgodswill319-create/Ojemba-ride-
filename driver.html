@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ọje Mba - Driver Dispatch Hub</title>
+    <link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDK Scripts -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, query, orderBy, onSnapshot, doc, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA5UguBfFrYOZ5_FTY_CkJ5CbW13R7u0Us",
+            authDomain: "oje-mba.firebaseapp.com",
+            projectId: "oje-mba",
+            storageBucket: "oje-mba.firebasestorage.app",
+            messagingSenderId: "533103428826",
+            appId: "1:533103428826:web:b8c16aa8f9ac92204a51e3",
+            measurementId: "G-ZQ72WX97WE"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedDriver = localStorage.getItem('oje_driver');
+            if (savedDriver) {
+                const driverData = JSON.parse(savedDriver);
+                openHub(driverData);
+            }
+
+            // Listen to live rides feed
+            const q = query(collection(db, "rides"), orderBy("createdAt", "desc"));
+            onSnapshot(q, (snapshot) => {
+                const container = document.getElementById('ridesContainer');
+                container.innerHTML = "";
+                
+                if (snapshot.empty) {
+                    container.innerHTML = `<p style="text-align:center; color:var(--text-muted);">No ride requests available right now.</p>`;
+                    return;
+                }
+
+                snapshot.forEach((docSnap) => {
+                    const ride = docSnap.data();
+                    const rideId = docSnap.id;
+                    const isAccepted = ride.status === "accepted";
+
+                    const card = document.createElement('div');
+                    card.className = "card";
+                    card.style.marginBottom = "15px";
+                    card.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <span style="background:rgba(190,255,0,0.1); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:11px; font-weight:700;">${ride.serviceType || 'Ọje Mba Ride'}</span>
+                            <span style="font-size:11px; font-weight:700; color:${isAccepted ? '#2ecc71' : '#f39c12'};">${isAccepted ? 'ACCEPTED' : 'PENDING'}</span>
+                        </div>
+                        <p style="margin:4px 0; font-size:13px;"><strong>Passenger:</strong> ${ride.passengerName || 'Anonymous'}</p>
+                        <p style="margin:4px 0; font-size:13px;"><strong>Phone:</strong> <a href="tel:${ride.passengerPhone}" style="color:var(--primary);">${ride.passengerPhone || 'N/A'}</a></p>
+                        <p style="margin:4px 0; font-size:13px;"><strong>State:</strong> ${ride.state}</p>
+                        <p style="margin:4px 0; font-size:13px;"><strong>From:</strong> ${ride.pickup}</p>
+                        <p style="margin:4px 0; font-size:13px;"><strong>To:</strong> ${ride.dropoff}</p>
+                        <p style="margin:4px 0; font-size:15px; color:var(--primary);"><strong>Fare:</strong> ₦${Number(ride.proposedFare || 0).toLocaleString()}</p>
+                        ${ride.driverPlate ? `<p style="margin:6px 0 0 0; font-size:12px; color:#2ecc71;"><strong>Assigned Driver Plate:</strong> ${ride.driverPlate} (${ride.driverName})</p>` : ''}
+                        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.08); margin:12px 0;">
+                        ${!isAccepted ? `
+                            <button class="primary-btn" style="margin-top:0;" onclick="acceptRide('${rideId}')">Accept Ride & Dispatch</button>
+                        ` : `<p style="text-align:center; color:#2ecc71; font-weight:bold; font-size:13px; margin:0;">Assigned / In Progress</p>`}
+                    `;
+                    container.appendChild(card);
+                });
+            }, (error) => {
+                console.error("Error listening to rides feed:", error);
+            });
+        });
+
+        window.acceptRide = async function(rideId) {
+            const driverData = JSON.parse(localStorage.getItem('oje_driver'));
+            if (!driverData) {
+                alert("Driver profile missing. Please re-register.");
+                return;
+            }
+
+            try {
+                const rideRef = doc(db, "rides", rideId);
+                await updateDoc(rideRef, {
+                    status: "accepted",
+                    driverName: driverData.name,
+                    driverPhone: driverData.phone,
+                    driverPlate: driverData.plate,
+                    driverVehicle: driverData.vehicle
+                });
+                alert("Ride accepted successfully!");
+            } catch (error) {
+                console.error("Firebase update failed: ", error);
+                alert("Failed to accept ride. Check your connection.");
+            }
+        };
+
+        window.registerDriverProfile = async function() {
+            const name = document.getElementById('driverName').value.trim();
+            const phone = document.getElementById('driverPhone').value.trim();
+            const plate = document.getElementById('driverPlate').value.trim().toUpperCase();
+            const vehicle = document.getElementById('driverVehicle').value.trim();
+
+            if (!name || !phone || !plate || !vehicle) {
+                alert("Please fill in all required vehicle and contact details.");
+                return;
+            }
+
+            try {
+                const driverData = { name, phone, plate, vehicle };
+                localStorage.setItem('oje_driver', JSON.stringify(driverData));
+                await setDoc(doc(db, "drivers", phone), driverData, { merge: true });
+
+                alert("Profile saved successfully!");
+                openHub(driverData);
+            } catch (e) {
+                console.error("Error saving driver: ", e);
+                alert("Registration failed. Check connection.");
+            }
+        };
+
+        function openHub(driver) {
+            document.getElementById('driverRegSection').style.display = 'none';
+            document.getElementById('ridesSection').style.display = 'block';
+            document.getElementById('driverInfoBadge').innerText = `${driver.name} | Plate: ${driver.plate}`;
+        }
+
+        window.switchTab = function(tabName) {
+            document.getElementById('feedTabContent').style.display = tabName === 'feed' ? 'block' : 'none';
+            document.getElementById('profileTabContent').style.display = tabName === 'profile' ? 'block' : 'none';
+            document.getElementById('btnFeedTab').style.background = tabName === 'feed' ? 'var(--primary)' : 'rgba(15, 22, 36, 0.8)';
+            document.getElementById('btnFeedTab').style.color = tabName === 'feed' ? '#0b0f19' : 'var(--text-muted)';
+            document.getElementById('btnProfileTab').style.background = tabName === 'profile' ? 'var(--primary)' : 'rgba(15, 22, 36, 0.8)';
+            document.getElementById('btnProfileTab').style.color = tabName === 'profile' ? '#0b0f19' : 'var(--text-muted)';
+
+            if (tabName === 'profile') {
+                const d = JSON.parse(localStorage.getItem('oje_driver'));
+                if (d) {
+                    document.getElementById('profileDetails').innerHTML = `
+                        <p style="margin:8px 0;"><strong>Full Name:</strong> ${d.name}</p>
+                        <p style="margin:8px 0;"><strong>Phone Number:</strong> ${d.phone}</p>
+                        <p style="margin:8px 0;"><strong>Vehicle Model & Color:</strong> ${d.vehicle}</p>
+                        <p style="margin:8px 0; color:var(--primary);"><strong>License Plate Number:</strong> ${d.plate}</p>
+                        <button class="primary-btn" style="margin-top:15px; background:rgba(190,255,0,0.1); color:var(--primary); border:1px solid var(--border);" onclick="populateEditForm()">Edit Profile</button>
+                    `;
+                }
+            }
+        };
+
+        window.populateEditForm = function() {
+            const d = JSON.parse(localStorage.getItem('oje_driver'));
+            if(d) {
+                document.getElementById('driverName').value = d.name;
+                document.getElementById('driverPhone').value = d.phone;
+                document.getElementById('driverVehicle').value = d.vehicle;
+                document.getElementById('driverPlate').value = d.plate;
+            }
+            document.getElementById('ridesSection').style.display = 'none';
+            document.getElementById('driverRegSection').style.display = 'block';
+            document.getElementById('driverRegTitle').innerText = "Update Profile";
+        };
+
+        window.logoutDriver = function() {
+            localStorage.removeItem('oje_driver');
+            document.getElementById('ridesSection').style.display = 'none';
+            document.getElementById('driverRegSection').style.display = 'block';
+            document.getElementById('driverRegTitle').innerText = "Driver Registration";
+            document.getElementById('driverName').value = '';
+            document.getElementById('driverPhone').value = '';
+            document.getElementById('driverVehicle').value = '';
+            document.getElementById('driverPlate').value = '';
+        };
+    </script>
+
+    <style>
+        :root {
+            --bg-deep: #0b0f19;
+            --surface: rgba(26, 31, 44, 0.7);
+            --border: rgba(190, 255, 0, 0.2);
+            --primary: #beff00;
+            --text-main: #ffffff;
+            --text-muted: #94a3b8;
+        }
+        body { font-family: 'Inter', sans-serif; background: var(--bg-deep); color: var(--text-main); margin: 0; padding: 20px; }
+        .content { max-width: 420px; margin: auto; }
+        .card { background: var(--surface); backdrop-filter: blur(16px); border: 1px solid var(--border); padding: 20px; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+        h2 { color: var(--primary); text-align: center; margin-bottom: 2px; font-size: 28px; }
+        p.subtitle { text-align: center; font-size: 12px; color: var(--text-muted); margin-top: 0; margin-bottom: 20px; text-transform: uppercase; }
+        label { display: block; margin-top: 12px; font-size: 13px; font-weight: 600; color: var(--text-muted); }
+        input { width: 100%; padding: 12px 14px; margin-top: 6px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(15, 22, 36, 0.8); color: var(--text-main); box-sizing: border-box; font-size: 14px; outline: none; }
+        button.primary-btn { width: 100%; background: #beff00; color: #0b0f19; padding: 14px; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; margin-top: 20px; cursor: pointer; }
+        .crazy-font { font-family: 'Permanent Marker', cursive, sans-serif; letter-spacing: 1px; transform: rotate(-3deg); display: inline-block; }
+    </style>
+</head>
+<body>
+    <div class="content">
+        <h2 class="crazy-font" style="width:100%; text-align:center;">Ọje Mba</h2>
+        <p class="subtitle">Driver &amp; Dispatch Security Hub</p>
+
+        <!-- Driver Registration Form -->
+        <div id="driverRegSection" class="card">
+            <h3 id="driverRegTitle" style="color:var(--primary); margin-top:0; font-size:18px;">Driver Registration</h3>
+            <p style="font-size:12px; color:var(--text-muted);">Register your vehicle credentials to enter the live hub.</p>
+
+            <label>Full Name:</label>
+            <input type="text" id="driverName" placeholder="e.g., Emeka Johnson">
+
+            <label>Phone Number:</label>
+            <input type="tel" id="driverPhone" placeholder="e.g., 08088888888">
+
+            <label>Vehicle Model & Color:</label>
+            <input type="text" id="driverVehicle" placeholder="e.g., Toyota Corolla (Black)">
+
+            <label>License Plate Number:</label>
+            <input type="text" id="driverPlate" placeholder="e.g., ABC-123XY" style="text-transform:uppercase;">
+
+            <button class="primary-btn" onclick="registerDriverProfile()">Save Profile &amp; Open Hub</button>
+        </div>
+
+        <!-- Live Rides Feed & Profile Hub -->
+        <div id="ridesSection" style="display:none;">
+            <div class="card" style="margin-bottom:15px; padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <span style="font-size:11px; color:var(--text-muted); display:block;">Logged Driver:</span>
+                    <span id="driverInfoBadge" style="font-size:13px; font-weight:bold; color:var(--primary);">---</span>
+                </div>
+                <button onclick="logoutDriver()" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:var(--text-muted); padding:6px 10px; border-radius:6px; font-size:11px; cursor:pointer;">Log Out</button>
+            </div>
+
+            <!-- Navigation Tabs -->
+            <div style="display:flex; gap:10px; margin-bottom:15px;">
+                <button id="btnFeedTab" onclick="switchTab('feed')" style="flex:1; padding:10px; background:var(--primary); color:#0b0f19; border:none; border-radius:8px; font-weight:700; font-size:12px; cursor:pointer;">Live Feed</button>
+                <button id="btnProfileTab" onclick="switchTab('profile')" style="flex:1; padding:10px; background:rgba(15, 22, 36, 0.8); color:var(--text-muted); border:1px solid rgba(255,255,255,0.05); border-radius:8px; font-weight:700; font-size:12px; cursor:pointer;">My Profile</button>
+            </div>
+
+            <!-- Tab 1: Feed -->
+            <div id="feedTabContent">
+                <div id="ridesContainer">
+                    <p style="text-align:center; color:var(--text-muted);">Listening for ride requests...</p>
+                </div>
+            </div>
+
+            <!-- Tab 2: Profile -->
+            <div id="profileTabContent" style="display:none;">
+                <div class="card">
+                    <h3 style="margin-top:0; color:var(--primary); font-size:18px;">Driver Credentials</h3>
+                    <div id="profileDetails"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

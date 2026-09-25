@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ọje Mba - Eastern Ride</title>
+    <link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDK Scripts -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA5UguBfFrYOZ5_FTY_CkJ5CbW13R7u0Us",
+            authDomain: "oje-mba.firebaseapp.com",
+            projectId: "oje-mba",
+            storageBucket: "oje-mba.firebasestorage.app",
+            messagingSenderId: "533103428826",
+            appId: "1:533103428826:web:b8c16aa8f9ac92204a51e3",
+            measurementId: "G-ZQ72WX97WE"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedPhone = localStorage.getItem('oje_passenger_phone');
+            const savedName = localStorage.getItem('oje_passenger_name');
+            if (savedPhone) {
+                document.getElementById('passengerPhone').value = savedPhone;
+                if (savedName) document.getElementById('passengerName').value = savedName;
+            }
+        });
+
+        window.requestRide = async function() {
+            const passengerName = document.getElementById('passengerName').value.trim();
+            const passengerPhone = document.getElementById('passengerPhone').value.trim();
+            const serviceType = document.getElementById('serviceType').value || 'Ọje Mba Ride';
+            const state = document.getElementById('state').value || 'Abia';
+            const pickup = document.getElementById('pickup').value.trim();
+            const dropoff = document.getElementById('dropoff').value.trim();
+            const fare = document.getElementById('fare').value.trim();
+
+            if (!passengerName || !passengerPhone || !pickup || !dropoff || !fare) {
+                alert("Please fill in all details before booking.");
+                return;
+            }
+
+            // Save credentials locally
+            localStorage.setItem('oje_passenger_phone', passengerPhone);
+            localStorage.setItem('oje_passenger_name', passengerName);
+
+            try {
+                await addDoc(collection(db, "rides"), {
+                    passengerName,
+                    passengerPhone,
+                    serviceType,
+                    state,
+                    pickup,
+                    dropoff,
+                    proposedFare: Number(fare),
+                    status: "pending",
+                    createdAt: serverTimestamp()
+                });
+
+                alert("Ride broadcasted successfully!");
+                document.getElementById('pickup').value = '';
+                document.getElementById('dropoff').value = '';
+                document.getElementById('fare').value = '';
+                switchView('historyView');
+                loadPassengerHistory(passengerPhone);
+            } catch (error) {
+                console.error("Error adding document: ", error);
+                alert("Error sending request.");
+            }
+        };
+
+        window.loadPassengerHistory = function(phone) {
+            const q = query(collection(db, "rides"), orderBy("createdAt", "desc"));
+            onSnapshot(q, (snapshot) => {
+                const container = document.getElementById('historyContainer');
+                container.innerHTML = "";
+                
+                let found = false;
+                snapshot.forEach((docSnap) => {
+                    const ride = docSnap.data();
+                    if (ride.passengerPhone === phone) {
+                        found = true;
+                        const card = document.createElement('div');
+                        card.className = "card";
+                        card.style.marginBottom = "15px";
+                        card.innerHTML = `
+                            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                                <span style="color:var(--primary); font-weight:700; font-size:12px;">${ride.serviceType}</span>
+                                <span style="font-weight:700; font-size:11px; color:${ride.status === 'accepted' ? '#2ecc71' : '#f39c12'};">${ride.status.toUpperCase()}</span>
+                            </div>
+                            <p style="margin:3px 0; font-size:13px;"><strong>From:</strong> ${ride.pickup}</p>
+                            <p style="margin:3px 0; font-size:13px;"><strong>To:</strong> ${ride.dropoff}</p>
+                            <p style="margin:3px 0; font-size:13px; color:var(--primary);"><strong>Fare:</strong> ₦${Number(ride.proposedFare).toLocaleString()}</p>
+                            ${ride.driverPlate ? `
+                                <div style="margin-top:10px; padding:10px; background:rgba(46,204,113,0.1); border:1px solid #2ecc71; border-radius:8px;">
+                                    <p style="margin:0; font-size:12px; color:#2ecc71; font-weight:bold;">Driver Assigned ✓</p>
+                                    <p style="margin:4px 0 0 0; font-size:12px;"><strong>Name:</strong> ${ride.driverName} (${ride.driverPhone})</p>
+                                    <p style="margin:2px 0 0 0; font-size:12px;"><strong>Vehicle:</strong> ${ride.driverVehicle}</p>
+                                    <p style="margin:2px 0 0 0; font-size:12px; color:var(--primary);"><strong>Plate Number:</strong> ${ride.driverPlate}</p>
+                                </div>
+                            ` : `<p style="margin-top:8px; font-size:11px; color:var(--text-muted);">Waiting for an available driver to accept...</p>`}
+                        `;
+                        container.appendChild(card);
+                    }
+                });
+
+                if (!found) {
+                    container.innerHTML = `<p style="text-align:center; color:var(--text-muted); font-size:13px;">No active ride history found.</p>`;
+                }
+            });
+        }
+
+        window.loadProfileData = function() {
+            const name = localStorage.getItem('oje_passenger_name') || 'Not set';
+            const phone = localStorage.getItem('oje_passenger_phone') || 'Not set';
+            document.getElementById('profileInfoDisplay').innerHTML = `
+                <p style="margin:8px 0; font-size:14px;"><strong>Full Name:</strong> ${name}</p>
+                <p style="margin:8px 0; font-size:14px;"><strong>Phone / WhatsApp:</strong> ${phone}</p>
+                <p style="margin:8px 0; font-size:14px;"><strong>Account Type:</strong> Passenger</p>
+            `;
+        }
+    </script>
+
+    <style>
+        :root {
+            --bg-deep: #0b0f19;
+            --surface: rgba(26, 31, 44, 0.7);
+            --border: rgba(190, 255, 0, 0.2);
+            --primary: #beff00;
+            --text-main: #ffffff;
+            --text-muted: #94a3b8;
+        }
+        body { font-family: 'Inter', sans-serif; background: var(--bg-deep); color: var(--text-main); margin: 0; padding: 0; overflow-x: hidden; }
+        .crazy-font { font-family: 'Permanent Marker', cursive, sans-serif; letter-spacing: 1px; transform: rotate(-3deg); display: inline-block; }
+        
+        #splashView { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(135deg, #0b0f19 0%, #121826 100%); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; padding: 20px; box-sizing: border-box; }
+        .splash-badge { position: absolute; top: 60px; background: rgba(190, 255, 0, 0.12); color: var(--primary); padding: 6px 16px; border-radius: 20px; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; border: 1px solid var(--border); }
+        .splash-card-wrapper { position: relative; width: 100%; max-width: 360px; margin-top: 40px; margin-bottom: 30px; }
+        .splash-card-back { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(190, 255, 0, 0.35); border-radius: 16px; transform: rotate(-4deg); z-index: 1; }
+        .splash-card-main { position: relative; background: #beff00; color: #0b0f19; padding: 26px 20px; border-radius: 16px; transform: rotate(2deg); z-index: 2; box-shadow: 0 15px 35px rgba(0,0,0,0.5); text-align: center; }
+        .splash-card-main h1 { color: #0b0f19; font-size: 42px; margin: 0 0 8px 0; text-transform: uppercase; }
+        .splash-btn { background: #beff00; color: #0b0f19; padding: 16px 50px; border: none; border-radius: 14px; font-weight: 700; font-size: 16px; cursor: pointer; box-shadow: 0 8px 25px rgba(190, 255, 0, 0.3); }
+
+        .navbar { display: flex; align-items: center; background: rgba(18, 24, 38, 0.8); backdrop-filter: blur(12px); padding: 15px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); position: sticky; top: 0; z-index: 100; }
+        .menu-btn { font-size: 22px; background: none; border: none; color: var(--text-main); cursor: pointer; margin-right: 15px; }
+        .nav-title { font-size: 18px; color: var(--primary); }
+
+        .sidebar { height: 100%; width: 0; position: fixed; z-index: 200; top: 0; left: 0; background: #0e1320; backdrop-filter: blur(20px); overflow-x: hidden; transition: 0.4s; padding-top: 60px; border-right: 1px solid var(--border); }
+        .sidebar a { padding: 14px 25px; text-decoration: none; font-size: 15px; color: var(--text-muted); display: block; }
+        .sidebar a:hover { color: var(--primary); background: rgba(190, 255, 0, 0.05); }
+        .sidebar .close-btn { position: absolute; top: 15px; right: 20px; font-size: 20px; background: none; border: none; color: var(--text-main); cursor: pointer; }
+
+        .content { padding: 20px; max-width: 420px; margin: auto; }
+        .card { background: var(--surface); backdrop-filter: blur(16px); border: 1px solid var(--border); padding: 24px; border-radius: 20px; margin-top: 10px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
+        h2 { color: var(--primary); text-align: center; margin-bottom: 2px; font-size: 28px; }
+        p.subtitle { text-align: center; font-size: 12px; color: var(--text-muted); margin-top: 0; margin-bottom: 20px; text-transform: uppercase; }
+        label { display: block; margin-top: 15px; font-size: 13px; font-weight: 600; color: var(--text-muted); }
+        input, select { width: 100%; padding: 12px 14px; margin-top: 6px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(15, 22, 36, 0.8); color: var(--text-main); box-sizing: border-box; font-size: 14px; outline: none; }
+        button.primary-btn { width: 100%; background: #beff00; color: #0b0f19; padding: 14px; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; margin-top: 20px; cursor: pointer; }
+        .service-tabs { display: flex; gap: 6px; margin-top: 10px; }
+        .tab-btn { flex: 1; padding: 10px 4px; background: rgba(15, 22, 36, 0.8); color: var(--text-muted); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; font-weight: 600; font-size: 11px; cursor: pointer; text-align: center; }
+        .tab-btn.active { background: var(--primary); color: #0b0f19; border-color: var(--primary); font-weight: 700; }
+        .view { display: none; }
+        .view.active { display: block; }
+    </style>
+</head>
+<body>
+
+    <div id="splashView">
+        <div class="splash-badge">Web 3.0 Mobility Network</div>
+        <div class="splash-card-wrapper">
+            <div class="splash-card-back"></div>
+            <div class="splash-card-main">
+                <h1 class="crazy-font">ỌJE MBA</h1>
+                <div style="font-size: 13px; font-weight: 700; text-transform: uppercase; color: #121826;">Eastern Ride</div>
+                <p style="color: #121826; font-size: 11px; font-weight: 500; margin-top: 10px;">Experience day/night &amp; despatch mobility across the east.</p>
+            </div>
+        </div>
+        <button class="splash-btn" onclick="document.getElementById('splashView').style.display='none'">Get started</button>
+    </div>
+
+    <div class="navbar">
+        <button class="menu-btn" onclick="let s = document.getElementById('mySidebar'); s.style.width = s.style.width === '260px' ? '0' : '260px';">☰</button>
+        <span class="nav-title crazy-font" style="font-size: 20px;">ỌJE MBA</span>
+    </div>
+
+    <div id="mySidebar" class="sidebar">
+        <button class="close-btn" onclick="document.getElementById('mySidebar').style.width='0'">✕</button>
+        <div style="padding: 0 25px 20px 25px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+            <p style="margin:0; font-weight:bold; font-size:15px; color:#fff;">Passenger</p>
+            <p style="margin:4px 0 0 0; font-size:11px; color:var(--primary);">Verified Member ★★★★★</p>
+        </div>
+        <a href="#" onclick="switchView('bookingView'); document.getElementById('mySidebar').style.width='0';">🚗 Book Ride / Dispatch</a>
+        <a href="#" onclick="switchView('historyView'); document.getElementById('mySidebar').style.width='0';">🕒 Activity &amp; Tracking</a>
+        <a href="#" onclick="switchView('profileView'); document.getElementById('mySidebar').style.width='0';">👤 My Profile</a>
+        <a href="#" onclick="switchView('safetyView'); document.getElementById('mySidebar').style.width='0';">🛡️ Safety Protocols</a>
+    </div>
+
+    <div class="content">
+        <!-- VIEW 1: BOOKING -->
+        <div id="bookingView" class="view active">
+            <div class="card">
+                <h2 class="crazy-font">Ọje Mba</h2>
+                <p class="subtitle">Eastern Ride &amp; Dispatch</p>
+                
+                <label>Service Mode:</label>
+                <div class="service-tabs">
+                    <button type="button" id="standardTab" class="tab-btn active" onclick="document.getElementById('serviceType').value='Ọje Mba Ride'; document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active')); this.classList.add('active');">🚗 Ride</button>
+                    <button type="button" id="nightTab" class="tab-btn" onclick="document.getElementById('serviceType').value='Night Ride'; document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active')); this.classList.add('active');">🌙 Night</button>
+                    <button type="button" id="bikeTab" class="tab-btn" onclick="document.getElementById('serviceType').value='Dispatch Bike'; document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active')); this.classList.add('active');">🏍️ Bike</button>
+                </div>
+                <input type="hidden" id="serviceType" value="Ọje Mba Ride">
+
+                <label>Full Name:</label>
+                <input type="text" id="passengerName" placeholder="e.g., Chinedu Okafor">
+
+                <label>Phone Number / WhatsApp:</label>
+                <input type="tel" id="passengerPhone" placeholder="e.g., 08012345678">
+
+                <label>Select State:</label>
+                <select id="state">
+                    <option value="Abia">Abia (Umuahia, Aba)</option>
+                    <option value="Anambra">Anambra (Awka, Onitsha, Nnewi)</option>
+                    <option value="Enugu">Enugu (Enugu Town, Nsukka)</option>
+                    <option value="Imo">Imo (Owerri, Orlu, Okigwe)</option>
+                    <option value="Ebonyi">Ebonyi (Abakaliki)</option>
+                </select>
+
+                <label>Pick-up Location:</label>
+                <input type="text" id="pickup" placeholder="e.g., Okpara Square, Upper Iweka">
+                
+                <label>Drop-off Destination / Package info:</label>
+                <input type="text" id="dropoff" placeholder="e.g., Ariaria, GRA, World Bank">
+                
+                <label>Offer Your Fare (₦):</label>
+                <input type="number" id="fare" placeholder="e.g., 2000">
+                
+                <button class="primary-btn" onclick="requestRide()">Book Now &amp; Broadcast</button>
+            </div>
+        </div>
+
+        <!-- VIEW 2: HISTORY -->
+        <div id="historyView" class="view">
+            <div class="card">
+                <h2 class="crazy-font" style="font-size:24px;">Activity &amp; Tracking</h2>
+                <p style="font-size:12px; color:var(--text-muted); text-align:center; margin-bottom:15px;">Live status updates and assigned driver plate numbers for your bookings:</p>
+                <div id="historyContainer"></div>
+            </div>
+        </div>
+
+        <!-- VIEW 3: PROFILE -->
+        <div id="profileView" class="view">
+            <div class="card">
+                <h2 class="crazy-font" style="font-size:24px;">My Profile</h2>
+                <p style="font-size:12px; color:var(--text-muted); text-align:center; margin-bottom:15px;">Your registered passenger details:</p>
+                <div id="profileInfoDisplay" style="background:rgba(15, 22, 36, 0.8); padding:15px; border-radius:12px; border:1px solid rgba(255,255,255,0.05);">
+                    <!-- Injected via JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW 4: SAFETY -->
+        <div id="safetyView" class="view">
+            <div class="card">
+                <h2 class="crazy-font" style="font-size:24px;">Safety Protocols</h2>
+                <p style="font-size:13px; color:var(--text-muted); line-height:1.6;">
+                    1. Every driver on Ọje Mba is registered with their verified <strong>License Plate Number</strong> and vehicle description for authority compliance.<br><br>
+                    2. Always confirm the driver's plate number matches what appears on your tracking history before stepping into the vehicle.<br><br>
+                    3. Operating seamlessly across Abia, Anambra, Enugu, Imo, and Ebonyi.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function switchView(viewId) {
+            document.querySelectorAll('.view').forEach(view => view.classList.remove('active'));
+            document.getElementById(viewId).classList.add('active');
+            
+            if(viewId === 'historyView') {
+                const p = localStorage.getItem('oje_passenger_phone');
+                if(p) loadPassengerHistory(p);
+            }
+            if(viewId === 'profileView') {
+                loadProfileData();
+            }
+        }
+    </script>
+</body>
+</html>

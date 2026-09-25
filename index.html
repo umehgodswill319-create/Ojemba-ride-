@@ -140,13 +140,63 @@
         body { font-family: 'Inter', sans-serif; background: var(--bg-deep); color: var(--text-main); margin: 0; padding: 0; overflow-x: hidden; }
         .crazy-font { font-family: 'Permanent Marker', cursive, sans-serif; letter-spacing: 1px; transform: rotate(-3deg); display: inline-block; }
         
-        #splashView { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(135deg, #0b0f19 0%, #121826 100%); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; padding: 20px; box-sizing: border-box; }
-        .splash-badge { position: absolute; top: 60px; background: rgba(190, 255, 0, 0.12); color: var(--primary); padding: 6px 16px; border-radius: 20px; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; border: 1px solid var(--border); }
-        .splash-card-wrapper { position: relative; width: 100%; max-width: 360px; margin-top: 40px; margin-bottom: 30px; }
-        .splash-card-back { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(190, 255, 0, 0.35); border-radius: 16px; transform: rotate(-4deg); z-index: 1; }
-        .splash-card-main { position: relative; background: #beff00; color: #0b0f19; padding: 26px 20px; border-radius: 16px; transform: rotate(2deg); z-index: 2; box-shadow: 0 15px 35px rgba(0,0,0,0.5); text-align: center; }
-        .splash-card-main h1 { color: #0b0f19; font-size: 42px; margin: 0 0 8px 0; text-transform: uppercase; }
-        .splash-btn { background: #beff00; color: #0b0f19; padding: 16px 50px; border: none; border-radius: 14px; font-weight: 700; font-size: 16px; cursor: pointer; box-shadow: 0 8px 25px rgba(190, 255, 0, 0.3); }
+        #splashView { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(135deg, #0b0f19 0%, #121826 100%); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 1000; text-align: center; padding: 20px; box-sizing: border-box; overflow: hidden; }
+        .splash-badge { position: absolute; top: 30px; background: rgba(190, 255, 0, 0.12); color: var(--primary); padding: 6px 16px; border-radius: 20px; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; border: 1px solid var(--border); }
+        
+        .splash-card-wrapper { position: relative; width: 100%; max-width: 380px; margin-top: 15px; margin-bottom: 20px; }
+        .splash-card-back { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(190, 255, 0, 0.35); border-radius: 20px; transform: rotate(-4deg); z-index: 1; }
+        .splash-card-main { position: relative; background: #beff00; color: #0b0f19; padding: 30px 20px; border-radius: 20px; transform: rotate(2deg); z-index: 2; box-shadow: 0 20px 45px rgba(0,0,0,0.6); text-align: center; }
+        .splash-card-main h1 { color: #0b0f19; font-size: 46px; margin: 0 0 6px 0; text-transform: uppercase; }
+        
+        .splash-btn { background: #beff00; color: #0b0f19; padding: 15px 45px; border: none; border-radius: 14px; font-weight: 700; font-size: 16px; cursor: pointer; box-shadow: 0 8px 25px rgba(190, 255, 0, 0.3); z-index: 10; margin-bottom: 15px; }
+
+        /* Big Sliding/Popping White Mercedes Benz Car Visual */
+        .big-car-container {
+            width: 100%;
+            max-width: 420px;
+            margin: 5px auto 0 auto;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 2px solid var(--border);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
+            background: #000;
+            position: relative;
+            animation: popInCar 1s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+        }
+
+        .big-car-image {
+            width: 100%;
+            height: 160px;
+            object-fit: cover;
+            display: block;
+            animation: slideCarImage 15s linear infinite alternate;
+        }
+
+        .car-overlay-badge {
+            position: absolute;
+            bottom: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(6px);
+            color: #fff;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            border: 1px solid rgba(190, 255, 0, 0.3);
+            white-space: nowrap;
+        }
+
+        @keyframes popInCar {
+            0% { transform: scale(0.8); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        @keyframes slideCarImage {
+            0% { transform: scale(1); }
+            100% { transform: scale(1.08); }
+        }
 
         .navbar { display: flex; align-items: center; background: rgba(18, 24, 38, 0.8); backdrop-filter: blur(12px); padding: 15px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); position: sticky; top: 0; z-index: 100; }
         .menu-btn { font-size: 22px; background: none; border: none; color: var(--text-main); cursor: pointer; margin-right: 15px; }
@@ -175,15 +225,23 @@
 
     <div id="splashView">
         <div class="splash-badge">Web 3.0 Mobility Network</div>
+        
         <div class="splash-card-wrapper">
             <div class="splash-card-back"></div>
             <div class="splash-card-main">
                 <h1 class="crazy-font">ỌJE MBA</h1>
                 <div style="font-size: 13px; font-weight: 700; text-transform: uppercase; color: #121826;">Eastern Ride</div>
-                <p style="color: #121826; font-size: 11px; font-weight: 500; margin-top: 10px;">Experience day/night &amp; despatch mobility across the east.</p>
+                <p style="color: #121826; font-size: 11px; font-weight: 600; margin-top: 6px;">Experience day/night &amp; despatch mobility across the east.</p>
             </div>
         </div>
-        <button class="splash-btn" onclick="document.getElementById('splashView').style.display='none'">Get started</button>
+
+        <!-- Big Popping / Sliding White Mercedes Benz Car -->
+        <div class="big-car-container">
+            <img src="https://images.unsplash.com/photo-1617814076367-b759c7d7e738?auto=format&fit=crop&w=800&q=80" alt="White Mercedes Benz" class="big-car-image">
+            <div class="car-overlay-badge">⭐ Mercedes Benz Executive Fleet Active</div>
+        </div>
+
+        <button class="splash-btn" onclick="document.getElementById('splashView').style.display='none'" style="margin-top: 15px;">Get started</button>
     </div>
 
     <div class="navbar">
@@ -201,6 +259,7 @@
         <a href="#" onclick="switchView('historyView'); document.getElementById('mySidebar').style.width='0';">🕒 Activity &amp; Tracking</a>
         <a href="#" onclick="switchView('profileView'); document.getElementById('mySidebar').style.width='0';">👤 My Profile</a>
         <a href="#" onclick="switchView('safetyView'); document.getElementById('mySidebar').style.width='0';">🛡️ Safety Protocols</a>
+        <a href="driver.html" style="color: var(--primary); font-weight: 700; border-top: 1px solid rgba(255,255,255,0.08); margin-top: 10px; padding-top: 15px;">🛡️ Switch to Driver Portal</a>
     </div>
 
     <div class="content">
@@ -271,27 +330,4 @@
             <div class="card">
                 <h2 class="crazy-font" style="font-size:24px;">Safety Protocols</h2>
                 <p style="font-size:13px; color:var(--text-muted); line-height:1.6;">
-                    1. Every driver on Ọje Mba is registered with their verified <strong>License Plate Number</strong> and vehicle description for authority compliance.<br><br>
-                    2. Always confirm the driver's plate number matches what appears on your tracking history before stepping into the vehicle.<br><br>
-                    3. Operating seamlessly across Abia, Anambra, Enugu, Imo, and Ebonyi.
-                </p>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        function switchView(viewId) {
-            document.querySelectorAll('.view').forEach(view => view.classList.remove('active'));
-            document.getElementById(viewId).classList.add('active');
-            
-            if(viewId === 'historyView') {
-                const p = localStorage.getItem('oje_passenger_phone');
-                if(p) loadPassengerHistory(p);
-            }
-            if(viewId === 'profileView') {
-                loadProfileData();
-            }
-        }
-    </script>
-</body>
-</html>
+                    1. Every driver on Ọje Mba is registered with their ver

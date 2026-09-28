@@ -144,7 +144,35 @@
                 alert("Failed to accept ride. Check your connection.");
             }
         };
+window.acceptCounterOffer = async function(rideId, newFare) {
+    try {
+        const rideRef = doc(db, "rides", rideId);
+        await updateDoc(rideRef, {
+            proposedFare: newFare,
+            status: 'pending', // Send back to pending pool with the agreed new price for any driver to grab
+            driverCounterOffer: null,
+            updatedAt: serverTimestamp()
+        });
+        alert("Counter-offer accepted! Ride updated with the new fare.");
+    } catch (error) {
+        console.error("Error accepting offer:", error);
+    }
+};
 
+window.rejectCounterOffer = async function(rideId, originalFare) {
+    try {
+        const rideRef = doc(db, "rides", rideId);
+        await updateDoc(rideRef, {
+            status: 'pending',
+            driverCounterOffer: null,
+            updatedAt: serverTimestamp()
+        });
+        alert("Counter-offer declined.");
+    } catch (error) {
+        console.error("Error rejecting offer:", error);
+    }
+};
+        
         window.registerDriverProfile = async function() {
             const name = document.getElementById('driverName').value.trim();
             const phone = document.getElementById('driverPhone').value.trim();

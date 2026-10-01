@@ -1,1 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ọje Mba - Eastern Ride & Dispatch</title>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc, arrayUnion, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
+        const firebaseConfig = {
+            apiKey: "AIzaSyA5UguBfFrYOZ5_FTY_CkJ5CbW13R7u0Us",
+            authDomain: "oje-mba.firebaseapp.com",
+            projectId: "oje-mba",
+            storageBucket: "oje-mba.firebasestorage.app",
+            messagingSenderId: "533103428826",
+            appId: "1:533103428826:web:b8c16aa8f9ac92204a51e3",
+            measurementId: "G-ZQ72WX97WE"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        window.addEventListener('DOMContentLoaded', () => {
+            setTimeout(() => {
+                const splash = document.getElementById('appSplashScreen');
+                if (splash) splash.classList.add('splash-fade-out');
+            }, 1500);
+
+            const savedPhone = localStorage.getItem('oje_passenger_phone');
+            const savedName = localStorage.getItem('oje_passenger_name');
+            if (savedPhone) {
+                const phoneInput = document.getElementById('passengerPhone');
+                const nameInput = document.getElementById('passengerName');
+                if (phoneInput) phoneInput.value = savedPhone;
+                if (savedName && nameInput) nameInput.value = savedName;
+                
+                loadPassengerHistory(savedPhone);
+            }
+        });
+
+        window.requestRide = async function() {
+            const passengerName = document.getElementById('passengerName').value.trim();
+            const passengerPhone = document.getElementById('passengerPhone').value.trim();
+            const serviceType = document.getElementById('serviceType').value || 'Ọje Mba Ride';
+            const state = document.getElementById('state').value || 'Abia';
+            const pickup = document.getElementById('pickup').value.trim();
+            const dropoff = document.getElementById('dropoff').value.trim();
+            const fare = document.getElementById('fare').value.trim();
+
+            if (!passengerName || !passengerPhone || !pickup || !dropoff || !fare) {
+                alert("Please fill in all details before booking.");
+                return;
+            }
+
+            localStorage.setItem('oje_passenger_phone', passengerPhone);
+            localStorage.setItem('oje_passenger_name', passengerName);
+
+            try {
+                await addDoc(collection(db, "rides"), {
+                    passengerName,
+                    passengerPhone,
+                    serviceType,
+                    state,
+                    pickup,
+                    dropoff,
+                    proposedFare: Number(fare),
+                    status: "pending",
+                    createdAt: serverTimestamp()
+                });
+
+                alert("Ride broadcasted successfully!");
+                document.getElementById('pickup').value = '';
+                document.getElementById('dropoff').value = '';
+                document.getElementById('fare').value = '';
+                switchView('historyView');
+                loadPassengerHistory(passengerPhone);
+            } catch (error) {
+                console.error("Error adding ride: ", error);
+                alert("Failed to broadcast ride. Check your connection.");
+            }
+        };
+
+        let currentPassengerRides = [];
+
+        window.loadPassengerHistory = function(phone) {
+            if (!phone) return;
+
+            const q = query(
+                collection(db, "rides"),
+                where("passengerPhone", "==", phone)
+            );
+
+            onSnapshot(q, (snapshot) => {
+                currentPassengerRides = [];
+                snapshot.forEach(docSnap => {
+                    currentPassengerRides.push({ id: docSnap.id, ...docSnap.data() });
+                });
+
+                currentPassengerRides.sort((a, b) => {
+                    const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+                    const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+                    return timeB - timeA;
+                });
+
+                updateTopMailIndicator();
+                const activeTabBtn = document.querySelector('#historyView .tab-btn.active') || document.querySelector('#historyView .tab-btn');
+                filterHistoryStatus('all', activeTabBtn);
+            }, (error) => {
+                console.error("Firestore subscription error:", error);
+            });
+        };
+
+        window.updateTopMailIndicator = function() {
+            let totalUnread = 0;
+            const readMessageTimestamps = JSON.parse(localStorage.getItem('oje_read_msgs') || '{}');
+
+            currentPassengerRides.forEach(ride => {
+                if (ride.messages && ride.messages.length > 0) {
+                    const lastMsg = ride.messages[ride.messages.length - 1];
+                    if (lastMsg.sender === 'driver') {
+                        const msgKey = `${ride.id}_${lastMsg.timestamp}`;
+                        if (!readMessageTimestamps[msgKey]) {
+                            totalUnread++;
+                        }
+                    }
+                }
+            });
+
+            const badge = document.getElementById('topMailBadge');
+            if (badge) {
+                if (totalUnread > 0) {
+                    badge.style.display = 'inline-block';
+                    badge.innerText = totalUnread;
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        };
+
+        window.openQuickMessagesModal = function() {
+            const modal = document.getElementById('quickMessagesModal');
+            if (modal) modal.style.display = 'flex';
+            
+            const readMessageTimestamps = JSON.parse(localStorage.getItem('oje_read_msgs') || '{}');
+            currentPassengerRides.forEach(ride => {
+                if (ride.messages && ride.messages.length > 0) {
+                    const lastMsg = ride.messages[ride.messages.length - 1];
+                    if (lastMsg.sender === 'driver') {
+                        readMessageTimestamps[`${ride.id}_${lastMsg.timestamp}`] = true;
+                    }
+                }
+            });
+            localStorage.setItem('oje_read_msgs', JSON.stringify(readMessageTimestamps));
+            updateTopMailIndicator();
+            renderQuickMessagesList();
+        };
+
+        window.closeQuickMessagesModal = function() {
+            const modal = document.getElementById('quickMessagesModal');
+            if (modal) modal.style.display = 'none';
+        };
+
+        window.renderQuickMessagesList = function() {
+            const container = document.getElementById('quickMessagesList');
+            if (!container) return;
+
+            container.innerHTML = "";
+            const activeRides = currentPassengerRides.filter(r => r.status === 'pending' || r.status === 'accepted' || r.status === 'negotiating');
+
+            if (activeRides.length === 0) {
+                container.innerHTML = `<p style="text-align:center; color:var(--text-muted); font-size:12px; margin-top:30px;">No active rides or driver negotiations right now.</p>`;
+                return;
+            }
+
+            activeRides.forEach(ride => {
+                let lastMsgText = "No messages yet. Waiting for drivers to pitch fares.";
+                if (ride.messages && ride.messages.length > 0) {
+                    const last = ride.messages[ride.messages.length - 1];
+                    lastMsgText = `${last.sender.toUpperCase()}: ${last.text}`;
+                }
+
+                const item = document.createElement('div');
+                item.style.cssText = "background:rgba(2,6,23,0.7); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:12px; margin-bottom:10px; cursor:pointer; transition:all 0.2s;";
+                item.onclick = () => openSingleChatView(ride.id);
+
+                item.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                        <span style="font-size:12px; color:var(--primary); font-weight:700;">${ride.pickup} ➔ ${ride.dropoff}</span>
+                        <span style="font-size:11px; color:var(--accent-gold); font-weight:bold;">₦${Number(ride.proposedFare).toLocaleString()}</span>
+                    </div>
+                    <p style="margin:0; font-size:11px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${lastMsgText}</p>
+                `;
+                container.appendChild(item);
+            });
+        };
+
+        window.openSingleChatView = function(rideId) {
+            const ride = currentPassengerRides.find(r => r.id === rideId);
+            const container = document.getElementById('quickMessagesList');
+            if (!ride || !container) return;
+
+            let messagesHtml = '';
+            if (ride.messages && ride.messages.length > 0) {
+                messagesHtml = ride.messages.map(msg => `
+                    <div style="padding: 8px 12px; border-radius: 10px; max-width: 85%; font-size: 12px; ${msg.sender === 'passenger' ? 'background: rgba(16,185,129,0.25); align-self: flex-end; color: #fff;' : 'background: rgba(255,255,255,0.1); align-self: flex-start; color: #eee;'}">
+                        <span style="font-size: 9px; display: block; color: var(--text-muted); margin-bottom: 2px;">${msg.sender.toUpperCase()}</span>${msg.text}
+                    </div>
+                `).join('');
+            } else {
+                messagesHtml = '<p style="text-align:center; color:var(--text-muted); font-size:11px; margin-top:20px;">No messages yet. Pitch your price or wait for a driver response.</p>';
+            }
+
+            container.innerHTML = `
+                <div style="display:flex; flex-direction:column; height:100%;">
+                    <button type="button" onclick="renderQuickMessagesList()" style="background:none; border:none; color:var(--primary); font-size:12px; font-weight:bold; text-align:left; cursor:pointer; margin-bottom:8px; padding:0;">
+                        ← Back to all chats
+                    </button>
+                    <div style="background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:8px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:11px; color:#fff; font-weight:bold;">${ride.pickup} ➔ ${ride.dropoff}</span>
+                        <span style="font-size:11px; color:var(--accent-gold);">₦${Number(ride.proposedFare).toLocaleString()}</span>
+                    </div>
+                    <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px; padding-right:4px; max-height:220px; margin-bottom:10px;">
+                        ${messagesHtml}
+                    </div>
+                    <div style="display:flex; gap:6px; margin-top:auto;">
+                        <input type="text" id="singleChatInput_${ride.id}" placeholder="Type reply or counter offer..." style="flex:1; padding:9px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.15); border-radius:8px; color:#fff; font-size:12px;">
+                        <button type="button" onclick="sendSingleChatMessage('${ride.id}')" style="background:var(--primary); color:#020617; border:none; padding:0 14px; border-radius:8px; font-weight:700; font-size:12px; cursor:pointer;">Send</button>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.sendSingleChatMessage = async function(rideId) {
+            const input = document.getElementById(`singleChatInput_${rideId}`);
+            if (!input) return;
+            const text = input.value.trim();
+            if (!text) return;
+
+            try {
+                const rideRef = doc(db, "rides", rideId);
+                await updateDoc(rideRef, {
+                    messages: arrayUnion({
+                        sender: 'passenger',
+                        text: text,
+                        timestamp: new Date().toISOString()
+                    })
+                });
+                input.value = "";
+                openSingleChatView(rideId);
+            } catch (err) {
+                console.error("Error sending message:", err);
+                alert("Failed to send message.");
+            }
+        };
+
+        window.filterHistoryStatus = function(statusFilter, btnElement) {
+            document.querySelectorAll('#historyView .tab-btn').forEach(b => b.classList.remove('active'));
+            if (btnElement) {
+                btnElement.classList.add('active');
+            }
+
+            const container = document.getElementById('historyContainer');
+            if (!container) return;
+            container.innerHTML = "";
+
+            const selectedDate = document.getElementById('historyDateFilter')?.value || '';
+
+            const filteredRides = currentPassengerRides.filter(ride => {
+                const status = (ride.status || 'pending').toLowerCase();
+                
+                let matchesStatus = true;
+                if (statusFilter === 'active') matchesStatus = status === 'pending' || status === 'accepted' || status === 'negotiating';
+                else if (statusFilter === 'completed') matchesStatus = status === 'completed';
+                else if (statusFilter === 'declined' || statusFilter === 'cancelled') matchesStatus = status === 'declined' || status === 'cancelled';
+
+                if (!matchesStatus) return false;
+
+                if (selectedDate && ride.createdAt) {
+                    const rideDate = ride.createdAt?.toDate ? ride.createdAt.toDate().toISOString().split('T')[0] : '';
+                    if (rideDate !== selectedDate) return false;
+                }
+
+                return true;
+            });
+
+            if (filteredRides.length === 0) {
+                container.innerHTML = `
+                    <p style="text-align:center; color:var(--text-muted); font-size:13px; line-height:1.6; margin-top:20px;">
+                        No rides found for this filter or date.
+                    </p>`;
+                return;
+            }
+
+            filteredRides.forEach((ride) => {
+                const card = document.createElement('div');
+                card.className = "card ride-collapse-card";
+                card.style.cssText = "margin-bottom:12px; margin-top:0; padding:14px; cursor:pointer; transition:all 0.2s ease;";
+                
+                let statusColor = '#f39c12';
+                if (ride.status === 'accepted') statusColor = '#2ecc71';
+                if (ride.status === 'completed') statusColor = '#3498db';
+                if (ride.status === 'declined' || ride.status === 'cancelled') statusColor = '#e74c3c';
+
+                let messagesHtml = '';
+                if (ride.messages && ride.messages.length > 0) {
+                    messagesHtml = ride.messages.map(msg => `
+                        <div style="padding: 6px 10px; border-radius: 8px; max-width: 85%; font-size: 11px; ${msg.sender === 'passenger' ? 'background: rgba(16,185,129,0.2); align-self: flex-end; color: #fff;' : 'background: rgba(255,255,255,0.1); align-self: flex-start; color: #eee;'}">
+                            <span style="font-size: 8px; display: block; color: var(--text-muted); margin-bottom: 2px;">${msg.sender.toUpperCase()}</span>${msg.text}
+                        </div>
+                    `).join('');
+                } else {
+                    messagesHtml = '<p style="text-align:center; color:var(--text-muted); font-size:10px; margin:4px 0;">No driver messages yet.</p>';
+                }
+
+                let driverCardHtml = '';
+                if (ride.driverPhone) {
+                    driverCardHtml = `
+                        <div style="margin-top:10px; padding:10px; background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.2); border-radius:10px; display:flex; justify-content:space-between; align-items:center;" onclick="event.stopPropagation(); viewDriverProfileModal('${ride.driverPhone}')">
+                            <div>
+                                <span style="font-size:10px; color:var(--primary); text-transform:uppercase; font-weight:bold; display:block;">Assigned Driver</span>
+                                <span style="font-size:13px; color:#fff; font-weight:bold;">${ride.driverName || 'Driver'}</span>
+                                <span style="font-size:11px; color:var(--text-muted); display:block;">${ride.driverVehicle || ''} (${ride.driverPlate || 'N/A'})</span>
+                            </div>
+                            <button type="button" style="background:var(--primary); color:#020617; border:none; padding:6px 10px; border-radius:6px; font-size:11px; font-weight:bold; cursor:pointer;">Profile &amp; Ratings</button>
+                        </div>
+                    `;
+                }
+
+                // Driver Rating block for completed rides
+                let ratingHtml = '';
+                if (ride.status === 'completed') {
+                    if (ride.rating) {
+                        ratingHtml = `<p style="margin:10px 0 0 0; font-size:13px; color:var(--accent-gold); font-weight:bold;">Driver Rated: ${'★'.repeat(ride.rating)}${'☆'.repeat(5 - ride.rating)}</p>`;
+                    } else {
+                        const currentSelected = window[`tempRating_${ride.id}`] || 0;
+                        let starsDisplay = '';
+                        for (let i = 1; i <= 5; i++) {
+                            starsDisplay += `<span onclick="event.stopPropagation(); setTempRating('${ride.id}', ${i})" style="cursor:pointer; padding:0 4px; color:${i <= currentSelected ? 'var(--accent-gold)' : 'var(--text-muted);'}">${i <= currentSelected ? '★' : '☆'}</span>`;
+                        }
+
+                        ratingHtml = `
+                            <div style="margin-top:12px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.1);" onclick="event.stopPropagation()">
+                                <p style="margin:0 0 8px 0; font-size:12px; color:var(--text-muted);">Rate your driver for this trip:</p>
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <div style="display:flex; gap:4px; font-size:26px; line-height:1;">
+                                        ${starsDisplay}
+                                    </div>
+                                    ${currentSelected > 0 ? `<button type="button" onclick="event.stopPropagation(); submitDriverRating('${ride.id}')" style="background:var(--primary); color:#020617; border:none; padding:6px 12px; border-radius:6px; font-weight:700; font-size:11px; cursor:pointer;">Submit ${currentSelected}★</button>` : ''}
+                                </div>
+                            </div>
+                        `;
+                    }
+                }
+
+                                card.innerHTML = `
+                    <div onclick="toggleRideAccordion(this)" style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <span style="color:var(--primary); font-weight:700; font-size:12px;">${ride.serviceType || 'Ride'}</span>
+                            <p style="margin:2px 0 0 0; font-size:12px; color:#fff; font-weight:500;">${ride.pickup} ➔ ${ride.dropoff}</p>
+                        </div>
+                        <div style="text-align:right;">
+                            <span style="font-weight:700; font-size:11px; color:${statusColor}; display:block;">${ride.status ? ride.status.toUpperCase() : 'PENDING'}</span>
+                            <span style="font-size:11px; color:var(--primary);">₦${Number(ride.proposedFare || 0).toLocaleString()}</span>
+                        </div>
+                    </div>
+
+                    <div class="ride-accordion-body" style="display:none; margin-top:12px; border-top:1px solid rgba(255,255,255,0.08); padding-top:12px;">
+                        <p style="margin:2px 0; font-size:12px;"><strong>From:</strong> ${ride.pickup}</p>
+                        <p style="margin:2px 0; font-size:12px;"><strong>To:</strong> ${ride.dropoff}</p>
+                        ${driverCardHtml}
+                        <div style="margin-top: 10px; padding: 10px; background: rgba(2, 6, 23, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;">
+                            <div style="max-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px;">
+                                ${messagesHtml}
+                            </div>
+                            <div style="display: flex; gap: 6px;" onclick="event.stopPropagation()">
+                                <input type="text" id="chatInput_${ride.id}" placeholder="Reply or counter-offer price..." style="flex: 1; padding: 7px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: #fff; font-size: 11px;">
+                                <button type="button" onclick="sendRideMessage('${ride.id}')" style="background: var(--primary); color: #020617; border: none; padding: 0 12px; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer;">Send</button>
+                            </div>
+                        </div>
+                        ${ratingHtml}
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        };
+
+        window.toggleRideAccordion = function(headerElem) {
+            const cardBody = headerElem.nextElementSibling;
+            if (!cardBody) return;
+            cardBody.style.display = cardBody.style.display === 'block' ? 'none' : 'block';
+        };
+
+        window.sendRideMessage = async function(rideId) {
+            const inputField = document.getElementById(`chatInput_${rideId}`);
+            if (!inputField) return;
+            const text = inputField.value.trim();
+            if (!text) return;
+
+            try {
+                const rideRef = doc(db, "rides", rideId);
+                await updateDoc(rideRef, {
+                    messages: arrayUnion({
+                        sender: 'passenger',
+                        text: text,
+                        timestamp: new Date().toISOString()
+                    })
+                });
+                inputField.value = "";
+            } catch (err) {
+                console.error("Error sending message:", err);
+                alert("Could not send message.");
+            }
+        };
+
+        window.setTempRating = function(rideId, stars) {
+            window[`tempRating_${rideId}`] = stars;
+            const phone = localStorage.getItem('oje_passenger_phone');
+            if (phone) loadPassengerHistory(phone);
+        };
+
+        window.submitDriverRating = async function(rideId) {
+            const stars = window[`tempRating_${rideId}`];
+            if (!stars) {
+                alert("Please select a star rating first.");
+                return;
+            }
+
+            try {
+                const rideRef = doc(db, "rides", rideId);
+                await updateDoc(rideRef, {
+                    rating: stars,
+                    ratedAt: new Date().toISOString()
+                });
+                alert(`Thank you! You rated this trip ${stars} stars.`);
+                delete window[`tempRating_${rideId}`];
+                const phone = localStorage.getItem('oje_passenger_phone');
+                if (phone) loadPassengerHistory(phone);
+            } catch (err) {
+                console.error("Error submitting rating:", err);
+                alert("Failed to submit rating. Please try again.");
+            }
+        };
+
+        window.viewDriverProfileModal = async function(driverPhone) {
+            if (!driverPhone) {
+                alert("Driver contact info not available.");
+                return;
+            }
+
+            try {
+                const driverDocRef = doc(db, "drivers", driverPhone);
+                const driverSnap = await getDoc(driverDocRef);
+
+                let driverName = "Driver";
+                let driverVehicle = "N/A";
+                let driverPlate = "N/A";
+                let facePhoto = "";
+
+                if (driverSnap.exists()) {
+                    const data = driverSnap.data();
+                    driverName = data.name || driverName;
+                    driverVehicle = data.vehicle || driverVehicle;
+                    driverPlate = data.plate || driverPlate;
+                    facePhoto = data.facePhoto || "";
+                }
+
+                const ridesQuery = query(
+                    collection(db, "rides"),
+                    where("driverPhone", "==", driverPhone),
+                    where("status", "==", "completed")
+                );
+                const rideSnapshots = await getDocs(ridesQuery);
+
+                let totalStars = 0;
+                let ratedRidesCount = 0;
+
+                rideSnapshots.forEach(docSnap => {
+                    const rideData = docSnap.data();
+                    if (rideData.rating && typeof rideData.rating === 'number') {
+                        totalStars += rideData.rating;
+                        ratedRidesCount++;
+                    }
+                });
+
+                const averageRating = ratedRidesCount > 0 ? (totalStars / ratedRidesCount).toFixed(1) : "New / Unrated";
+                const starsDisplay = ratedRidesCount > 0 ? '★'.repeat(Math.round(totalStars / ratedRidesCount)) + '☆'.repeat(5 - Math.round(totalStars / ratedRidesCount)) : '☆☆☆☆☆';
+
+                let modalContainer = document.getElementById('driverProfileModal');
+                if (!modalContainer) {
+                    modalContainer = document.createElement('div');
+                    modalContainer.id = 'driverProfileModal';
+                    document.body.appendChild(modalContainer);
+                }
+                
+                modalContainer.innerHTML = `
+                    <div style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(2,6,23,0.85); backdrop-filter:blur(8px); display:flex; justify-content:center; align-items:center; z-index:99999;">
+                        <div class="card" style="width:90%; max-width:340px; position:relative; text-align:center; margin-top:0;">
+                            <button onclick="document.getElementById('driverProfileModal').remove()" style="position:absolute; top:12px; right:12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:#fff; padding:4px 10px; border-radius:6px; cursor:pointer;">✕</button>
+                            
+                            ${facePhoto ? `<img src="${facePhoto}" style="width:80px; height:80px; border-radius:50%; border:2px solid var(--primary); object-fit:cover; margin:0 auto 10px auto; display:block;">` : ''}
+                            
+                            <h3 style="color:var(--primary); margin:4px 0; font-size:18px;">${driverName}</h3>
+                            <p style="font-size:12px; color:var(--text-muted); margin:2px 0;">${driverVehicle}</p>
+                            <p style="font-size:12px; font-weight:bold; color:#38bdf8; margin:2px 0;">Plate: ${driverPlate}</p>
+                            <p style="font-size:11px; color:var(--primary); margin:4px 0;">Phone: <a href="tel:${driverPhone}" style="color:var(--primary);">${driverPhone}</a></p>
+                            
+                            <hr style="border:0; border-top:1px solid rgba(255,255,255,0.08); margin:12px 0;">
+                            
+                            <div style="background:rgba(251,191,36,0.1); border:1px solid rgba(251,191,36,0.3); padding:10px; border-radius:12px; margin-top:8px;">
+                                <span style="font-size:11px; color:var(--text-muted); display:block;">Driver Rating Score</span>
+                                <span style="font-size:18px; color:var(--accent-gold); letter-spacing:2px;">${starsDisplay}</span>
+                                <span style="font-size:12px; font-weight:bold; color:#fff; display:block; margin-top:2px;">${averageRating} / 5.0 (${ratedRidesCount} reviews)</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                console.error("Error loading driver profile details:", err);
+                alert("Could not load driver profile information.");
+            }
+        };
+
+        window.switchView = function(viewId) {
+            const sidebar = document.getElementById('mySidebar');
+            if (sidebar) sidebar.style.width = '0';
+
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            const targetView = document.getElementById(viewId);
+            if (targetView) targetView.classList.add('active');
+            
+            if (viewId === 'historyView') {
+                const phone = localStorage.getItem('oje_passenger_phone');
+                if (phone) loadPassengerHistory(phone);
+            }
+        };
+    </script>
+
+      <style>
+        :root {
+            --bg-deep: #020617;
+            --surface: rgba(15, 23, 42, 0.75);
+            --border: rgba(16, 185, 129, 0.25);
+            --primary: #10b981;
+            --accent-gold: #fbbf24;
+            --text-main: #ffffff;
+            --text-muted: #94a3b8;
+        }
+        body { font-family: 'Inter', sans-serif; background: radial-gradient(circle at 50% 20%, #0f172a 0%, #020617 100%); background-attachment: fixed; color: var(--text-main); margin: 0; padding: 0; overflow-x: hidden; min-height: 100vh; }
+        .crazy-font { font-family: 'Permanent Marker', cursive, sans-serif; letter-spacing: 1px; transform: rotate(-2deg); display: inline-block; }
+
+        #appSplashScreen {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #020617; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 99999; opacity: 1; visibility: visible; transition: opacity 0.6s ease, visibility 0.6s ease;
+        }
+        .splash-logo-box { width: 220px; height: auto; animation: logoPulse 2s infinite ease-in-out; }
+        @keyframes logoPulse {
+            0%, 100% { transform: scale(1); filter: drop-shadow(0 0 15px rgba(16,185,129,0.3)); }
+            50% { transform: scale(1.05); filter: drop-shadow(0 0 30px rgba(16,185,129,0.6)); }
+        }
+        .splash-fade-out { opacity: 0 !important; visibility: hidden !important; }
+
+        .navbar { display: flex; justify-content: space-between; align-items: center; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); padding: 15px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); position: sticky; top: 0; z-index: 100; }
+        .menu-btn { font-size: 22px; background: none; border: none; color: var(--text-main); cursor: pointer; }
+        .nav-title { font-size: 18px; color: var(--primary); }
+
+        .sidebar { height: 100%; width: 0; position: fixed; z-index: 200; top: 0; left: 0; background: #080d1a; backdrop-filter: blur(20px); overflow-x: hidden; transition: 0.4s; padding-top: 60px; border-right: 1px solid var(--border); }
+        .sidebar a { padding: 14px 25px; text-decoration: none; font-size: 15px; color: var(--text-muted); display: block; }
+        .sidebar a:hover { color: var(--primary); background: rgba(16, 185, 129, 0.08); }
+        .sidebar .close-btn { position: absolute; top: 15px; right: 20px; font-size: 20px; background: none; border: none; color: var(--text-main); cursor: pointer; }
+
+        .content { padding: 20px; max-width: 420px; margin: auto; }
+        .card { background: var(--surface); backdrop-filter: blur(16px); border: 1px solid var(--border); padding: 24px; border-radius: 20px; margin-top: 10px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+        h2 { color: var(--primary); text-align: center; margin-bottom: 2px; font-size: 28px; }
+        p.subtitle { text-align: center; font-size: 12px; color: var(--text-muted); margin-top: 0; margin-bottom: 20px; text-transform: uppercase; }
+        label { display: block; margin-top: 15px; font-size: 13px; font-weight: 600; color: var(--text-muted); }
+        input, select { width: 100%; padding: 12px 14px; margin-top: 6px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(2, 6, 23, 0.8); color: var(--text-main); box-sizing: border-box; font-size: 14px; outline: none; }
+        button.primary-btn { width: 100%; background: linear-gradient(135deg, #10b981 0%, #0284c7 100%); color: #ffffff; padding: 14px; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; margin-top: 20px; cursor: pointer; box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3); }
+        .service-tabs { display: flex; gap: 6px; margin-top: 10px; }
+        .tab-btn { flex: 1; padding: 10px 4px; background: rgba(2, 6, 23, 0.8); color: var(--text-muted); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; font-weight: 600; font-size: 11px; cursor: pointer; text-align: center; }
+        .tab-btn.active { background: var(--primary) !important; color: #020617 !important; font-weight: 700 !important; }
+        .view { display: none; }
+        .view.active { display: block; }
+    </style>
+</head>
+<body>
+
+    <div id="appSplashScreen">
+        <div class="splash-logo-box">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+                <defs>
+                    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stop-color="#0f172a" />
+                        <stop offset="100%" stop-color="#020617" />
+                    </radialGradient>
+                    <linearGradient id="primaryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#10b981" />
+                        <stop offset="50%" stop-color="#059669" />
+                        <stop offset="100%" stop-color="#0284c7" />
+                    </linearGradient>
+                    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stop-color="#f59e0b" />
+                        <stop offset="100%" stop-color="#fbbf24" />
+                    </linearGradient>
+                    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur stdDeviation="8" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
+                </defs>
+                <rect width="100%" height="100%" rx="32" fill="url(#bgGrad)" />
+                <g transform="translate(0, -25)">
+                    <path d="M 250,110 A 85,85 0 1,0 335,195 L 360,195 A 110,110 0 1,1 250,85 Z" fill="url(#primaryGrad)" filter="url(#glow)" />
+                    <path d="M 220,150 C 270,140 310,170 340,210 C 300,205 270,220 230,240 Z" fill="url(#goldGrad)" />
+                    <circle cx="250" cy="195" r="16" fill="#ffffff" />
+                    <circle cx="250" cy="195" r="8" fill="#10b981" />
+                    <circle cx="250" cy="330" r="14" fill="url(#goldGrad)" filter="url(#glow)" />
+                    <circle cx="250" cy="330" r="6" fill="#ffffff" />
+                </g>
+                <text x="250" y="395" text-anchor="middle" fill="#ffffff" font-family="sans-serif" font-weight="800" font-size="34" letter-spacing="4">ỌJEMBA</text>
+                <text x="250" y="425" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-weight="600" font-size="14" letter-spacing="8">RIDE &amp; DISPATCH</text>
+                <rect x="185" y="442" width="130" height="20" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1" />
+                <text x="250" y="456" text-anchor="middle" fill="#10b981" font-family="sans-serif" font-weight="700" font-size="9" letter-spacing="1.5">WEB3 MOBILITY</text>
+            </svg>
+        </div>
+    </div>
+
+    <!-- NAVBAR WITH TOP MAIL SHORTCUT ICON -->
+    <div class="navbar">
+        <div style="display:flex; align-items:center;">
+            <button class="menu-btn" onclick="let s = document.getElementById('mySidebar'); s.style.width = s.style.width === '260px' ? '0' : '260px';">☰</button>
+            <span class="nav-title crazy-font" style="font-size: 20px; margin-left:10px;">ỌJE MBA</span>
+        </div>
+        <div>
+            <button type="button" onclick="openQuickMessagesModal()" style="background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); padding:6px 10px; border-radius:10px; cursor:pointer; position:relative; font-size:16px;">
+                💌 <span id="topMailBadge" style="display:none; position:absolute; top:-6px; right:-6px; background:#ef4444; color:#fff; font-size:9px; font-weight:800; padding:1px 5px; border-radius:10px;">0</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="mySidebar" class="sidebar">
+        <button class="close-btn" onclick="document.getElementById('mySidebar').style.width='0'">✕</button>
+        <div style="padding: 0 25px 20px 25px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+            <p style="margin:0; font-weight:bold; font-size:15px; color:#fff;">Passenger</p>
+            <p style="margin:4px 0 0 0; font-size:11px; color:var(--primary);">Verified Member ★★★★★</p>
+        </div>
+        <a href="javascript:void(0)" onclick="switchView('bookingView')">🚗 Book Ride / Dispatch</a>
+        <a href="javascript:void(0)" onclick="switchView('historyView')">🕒 Activity &amp; Tracking</a>
+        <a href="javascript:void(0)" onclick="switchView('safetyView')">🛡 Safety Protocols</a>
+        <a href="driver.html" style="color: var(--primary); font-weight: 700; border-top: 1px solid rgba(255,255,255,0.08); margin-top: 10px; padding-top: 15px;">🛡 Switch to Driver Portal</a>
+    </div>
+
+    <div class="content">
+        <div id="bookingView" class="view active">
+            <div class="card">
+                <h2 class="crazy-font">Ọje Mba</h2>
+                <p class="subtitle">Eastern Ride &amp; Dispatch</p>
+                
+                <label>Service Mode:</label>
+                <div class="service-tabs" style="display: flex; gap: 6px;">
+                    <button type="button" id="standardTab" class="tab-btn active" onclick="document.getElementById('serviceType').value='Ọje Mba Ride'; document.querySelectorAll('.service-tabs .tab-btn').forEach(b=>b.classList.remove('active')); this.classList.add('active');">🚗 Ride</button>
+                    <button type="button" id="nightTab" class="tab-btn" onclick="document.getElementById('serviceType').value='Night Ride'; document.querySelectorAll('.service-tabs .tab-btn').forEach(b=>b.classList.remove('active')); this.classList.add('active');">🌙 Night</button>
+                    <button type="button" id="dispatchTab" class="tab-btn" onclick="document.getElementById('serviceType').value='Dispatch'; document.querySelectorAll('.service-tabs .tab-btn').forEach(b=>b.classList.remove('active')); this.classList.add('active');">🏍 Despatch</button>
+                </div>
+                <input type="hidden" id="serviceType" value="Ọje Mba Ride">
+
+                <label>Your Name:</label>
+                <input type="text" id="passengerName" placeholder="Enter your full name">
+
+                <label>Phone / WhatsApp:</label>
+                <input type="tel" id="passengerPhone" placeholder="080XXXXXXXX">
+
+                <label>State:</label>
+                <select id="state">
+                    <option value="Abia">Abia State</option>
+                    <option value="Imo">Imo State</option>
+                    <option value="Anambra">Anambra State</option>
+                    <option value="Enugu">Enugu State</option>
+                    <option value="Ebonyi">Ebonyi State</option>
+                </select>
+
+                <label>Pickup Location:</label>
+                <input type="text" id="pickup" placeholder="e.g., Aba Road, Umuahia">
+
+                <label>Dropoff Destination:</label>
+                <input type="text" id="dropoff" placeholder="e.g., Orji Mechanic, Owerri">
+
+                <label>Proposed Fare (₦):</label>
+                <input type="number" id="fare" placeholder="e.g., 2000">
+
+                <button class="primary-btn" onclick="requestRide()">Request Ride</button>
+            </div>
+        </div>
+
+        <div id="historyView" class="view">
+            <div class="card">
+                <h2 class="crazy-font" style="font-size:24px;">Activity &amp; Tracking</h2>
+                <p style="font-size:12px; color:var(--text-muted); text-align:center; margin-bottom:15px;">Tap any ride to view driver negotiations &amp; chat</p>
+                
+                <div style="margin-bottom: 12px; display: flex; gap: 6px; align-items: center;">
+                    <input type="date" id="historyDateFilter" onchange="filterHistoryStatus('all', document.querySelector('#historyView .tab-btn'))" style="flex:1; padding:8px; font-size:12px; border-radius:8px;">
+                    <button type="button" onclick="document.getElementById('historyDateFilter').value=''; filterHistoryStatus('all', document.querySelector('#historyView .tab-btn'))" style="background:rgba(255,255,255,0.1); color:#fff; border:none; padding:8px 12px; border-radius:8px; font-size:11px; cursor:pointer;">Clear Date</button>
+                </div>
+
+                <div class="service-tabs" style="margin-bottom: 15px;">
+                    <button type="button" class="tab-btn active" onclick="filterHistoryStatus('all', this)">All</button>
+                    <button type="button" class="tab-btn" onclick="filterHistoryStatus('active', this)">Active</button>
+                    <button type="button" class="tab-btn" onclick="filterHistoryStatus('completed', this)">Completed</button>
+                    <button type="button" class="tab-btn" onclick="filterHistoryStatus('declined', this)">Declined</button>
+                </div>
+
+                <div id="historyContainer">
+                    <p style="text-align:center; color:var(--text-muted); font-size:13px; line-height:1.6;">
+                        Nothing here yet.<br>You will see your history here when you book your first ride!
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div id="safetyView" class="view">
+            <div class="card">
+                <h2 class="crazy-font" style="font-size:24px;">Safety Protocols</h2>
+                <p style="font-size:12px; color:var(--text-muted); text-align:center; margin-bottom:15px;">Your security is our priority across the east</p>
+                <div style="background:rgba(2, 6, 23, 0.8); padding:15px; border-radius:12px; border:1px solid rgba(255,255,255,0.05);">
+                    <p style="font-size:13px; color:var(--text-main); line-height:1.6; margin:0 0 12px 0;">
+                        <strong>1. Driver Verification:</strong> Every driver on Ọje Mba goes through thorough background verification, including license checks and valid IDs before approval.
+                    </p>
+                    <p style="font-size:13px; color:var(--text-main); line-height:1.6; margin:0;">
+                        <strong>2. Plate Number Check:</strong> Always confirm your driver's vehicle and plate number match what appears on your tracking screen before entering the vehicle.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Messages Popup Modal -->
+    <div id="quickMessagesModal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(2,6,23,0.85); backdrop-filter:blur(8px); z-index:99999; justify-content:center; align-items:center; padding:20px; box-sizing:border-box;">
+        <div style="background:rgba(15,23,42,0.95); border:1px solid rgba(16,185,129,0.3); padding:20px; border-radius:20px; max-width:360px; width:100%; height:380px; box-shadow:0 20px 40px rgba(0,0,0,0.6); display:flex; flex-direction:column;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <h3 style="color:#ffffff; margin:0; font-size:16px;">💌 Driver Negotiations</h3>
+                <button type="button" onclick="closeQuickMessagesModal()" style="background:none; border:none; color:var(--text-muted); font-size:16px; cursor:pointer;">✕</button>
+            </div>
+            <div id="quickMessagesList" style="overflow-y:auto; flex:1; padding-right:2px; display:flex; flex-direction:column;">
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>

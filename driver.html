@@ -1,1 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ọje Mba - Driver Dispatch Hub</title>
+    <link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDK Scripts -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, setDoc, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
+        const firebaseConfig = {
+            apiKey: "AIzaSyA5UguBfFrYOZ5_FTY_CkJ5CbW13R7u0Us",
+            authDomain: "oje-mba.firebaseapp.com",
+            projectId: "oje-mba",
+            storageBucket: "oje-mba.firebasestorage.app",
+            messagingSenderId: "533103428826",
+            appId: "1:533103428826:web:b8c16aa8f9ac92204a51e3",
+            measurementId: "G-ZQ72WX97WE"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        let webcamStream = null;
+        window.capturedFaceData = null;
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedDriver = localStorage.getItem('oje_driver');
+            if (savedDriver) {
+                const driverData = JSON.parse(savedDriver);
+                openHub(driverData);
+            } else {
+                listenToLiveFeed();
+            }
+        });
+
+        // 1. LIVE FEED: Compact cards that open a Messenger-style chat view on tap
+        function listenToLiveFeed() {
+            const q = query(
+                collection(db, "rides"),
+                where("status", "==", "pending")
+            );
+
+            onSnapshot(q, (snapshot) => {
+                const container = document.getElementById('ridesContainer');
+                if(!container) return;
+                
+                const activeChatId = window.currentChatRideId;
+                if (activeChatId) {
+                    const activeDoc = snapshot.docs.find(d => d.id === activeChatId);
+                    if (activeDoc) {
+                        openRideChat({ id: activeDoc.id, ...activeDoc.data() });
+                    }
+                    return;
+                }
+
+                container.innerHTML = "";
+                
+                if (snapshot.empty) {
+                    container.innerHTML = `<p style="text-align:center; color:var(--text-muted); font-size:13px;">No available ride requests right now.</p>`;
+                    return;
+                }
+
+                let ridesList = [];
+                snapshot.forEach((docSnap) => {
+                    ridesList.push({ id: docSnap.id, ...docSnap.data() });
+                });
+
+                ridesList.sort((a, b) => {
+                    const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+                    const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+                    return timeB - timeA;
+                });
+
+                ridesList.forEach((ride) => {
+                    const card = document.createElement('div');
+                    card.className = "card";
+                    card.style.marginBottom = "12px";
+                    card.style.marginTop = "0";
+                    card.style.cursor = "pointer";
+                    card.style.transition = "border-color 0.2s";
+
+                    const hasNegotiated = ride.messages && ride.messages.length > 0;
+                    const statusText = hasNegotiated ? "💬 Negotiation Active" : "📥 New Request";
+                    const statusColor = hasNegotiated ? "#38bdf8" : "#10b981";
+
+                    card.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                            <span style="color:var(--primary); font-weight:700; font-size:12px;">${ride.serviceType || 'Ọje Mba Ride'}</span>
+                            <span style="font-size:11px; font-weight:700; color:${statusColor};">${statusText}</span>
+                        </div>
+                        <p style="margin:2px 0; font-size:13px;"><strong>Passenger:</strong> ${ride.passengerName || 'Anonymous'}</p>
+                        <p style="margin:2px 0; font-size:13px;"><strong>Route:</strong> ${ride.pickup} ➔ ${ride.dropoff}</p>
+                        <p style="margin:2px 0; font-size:13px; color:var(--primary);"><strong>Proposed Fare:</strong> ₦${Number(ride.proposedFare || 0).toLocaleString()}</p>
+                        <div style="text-align:right; margin-top:8px;">
+                            <span style="font-size:11px; color:#38bdf8; font-weight:600;">Tap to Open Chat ➔</span>
+                        </div>
+                    `;
+
+                    card.onclick = () => openRideChat(ride);
+                    container.appendChild(card);
+                });
+            }, (error) => {
+                console.error("Error listening to rides feed:", error);
+            });
+        }
+
+        // 2. MESSENGER CHAT VIEW SCREEN
+        window.currentChatRideId = null;
+
+        window.openRideChat = function(ride) {
+            window.currentChatRideId = ride.id;
+            const container = document.getElementById('ridesContainer');
+            
+            let chatHtml = `<div style="background:rgba(2,6,23,0.7); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:12px; height:240px; overflow-y:auto; margin:12px 0; display:flex; flex-direction:column; gap:8px;" id="chatMessageBox">`;
+            
+            chatHtml += `<div style="align-self:flex-start; background:rgba(16,185,129,0.15); color:#10b981; padding:8px 12px; border-radius:10px; font-size:13px; max-width:85%;"><strong>${ride.passengerName || 'Passenger'}:</strong> Proposed ₦${Number(ride.proposedFare || 0).toLocaleString()}</div>`;
+
+            if (ride.messages && Array.isArray(ride.messages)) {
+                ride.messages.forEach(msg => {
+                    const isDriver = msg.sender === 'driver';
+                    const bg = isDriver ? 'rgba(2, 132, 199, 0.25)' : 'rgba(16,185,129,0.15)';
+                    const color = isDriver ? '#38bdf8' : '#10b981';
+                    const align = isDriver ? 'flex-end' : 'flex-start';
+                    const senderName = isDriver ? (msg.senderName || 'You') : (ride.passengerName || 'Passenger');
+                    chatHtml += `<div style="align-self:${align}; background:${bg}; color:${color}; padding:8px 12px; border-radius:10px; font-size:13px; max-width:85%;"><strong>${senderName}:</strong> ${msg.text}</div>`;
+                });
+            }
+            chatHtml += `</div>`;
+
+            container.innerHTML = `
+                <div class="card" style="margin-top:0;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:8px;">
+                        <button onclick="closeRideChat()" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:#fff; padding:6px 12px; border-radius:8px; font-size:12px; cursor:pointer;">← Back to Feed</button>
+                        <span style="font-weight:700; color:var(--primary); font-size:14px;">Chat: ${ride.passengerName}</span>
+                    </div>
+
+                    <p style="margin:2px 0; font-size:12px; color:var(--text-muted);"><strong>Phone:</strong> <a href="tel:${ride.passengerPhone}" style="color:var(--primary);">${ride.passengerPhone || 'N/A'}</a></p>
+                    <p style="margin:2px 0; font-size:12px; color:var(--text-muted);"><strong>Route:</strong> ${ride.pickup} ➔ ${ride.dropoff}</p>
+
+                    ${chatHtml}
+
+                    <div style="display:flex; gap:8px; margin-top:10px;">
+                        <input type="text" id="messengerInput" placeholder="Type counter offer or message..." style="margin-top:0; padding:10px; font-size:13px;">
+                        <button type="button" onclick="sendMessengerMessage('${ride.id}')" style="background:var(--primary); color:#020617; border:none; padding:10px 16px; border-radius:10px; font-weight:700; font-size:13px; cursor:pointer;">Send</button>
+                    </div>
+
+                    <hr style="border:0; border-top:1px solid rgba(255,255,255,0.08); margin:14px 0;">
+                    
+                    <!-- Side-by-Side Accept & Decline Buttons -->
+                    <div style="display:flex; gap:10px;">
+                        <button type="button" onclick="declineRide('${ride.id}')" style="flex:1; background:rgba(239, 68, 68, 0.15); color:#ef4444; border:1px solid rgba(239, 68, 68, 0.3); padding:12px; border-radius:12px; font-weight:700; font-size:14px; cursor:pointer;">Decline</button>
+                        <button type="button" onclick="acceptRide('${ride.id}')" class="primary-btn" style="flex:1; margin-top:0; padding:12px; font-size:14px;">Accept &amp; Dispatch</button>
+                    </div>
+                </div>
+            `;
+
+            const box = document.getElementById('chatMessageBox');
+            if(box) box.scrollTop = box.scrollHeight;
+        };
+
+        window.closeRideChat = function() {
+            window.currentChatRideId = null;
+            listenToLiveFeed();
+        };
+
+        // 3. SEND MESSAGE FROM DEDICATED CHAT VIEW
+        window.sendMessengerMessage = async function(rideId) {
+            const driverData = JSON.parse(localStorage.getItem('oje_driver'));
+            if (!driverData) {
+                alert("Driver profile missing. Please register first.");
+                return;
+            }
+
+            const inputField = document.getElementById('messengerInput');
+            const text = inputField.value.trim();
+
+            if (!text) {
+                alert("Please type a message or counter offer.");
+                return;
+            }
+
+            try {
+                const rideRef = doc(db, "rides", rideId);
+                const snap = await getDoc(rideRef);
+                if (snap.exists()) {
+                    const data = snap.data();
+                    const existingMessages = data.messages || [];
+
+                    const newMessage = {
+                        sender: 'driver',
+                        senderName: driverData.name,
+                        text: text,
+                        timestamp: Date.now()
+                    };
+
+                    await updateDoc(rideRef, {
+                        messages: [...existingMessages, newMessage],
+                        negotiationStatus: "countered",
+                        driverName: driverData.name,
+                        driverPhone: driverData.phone,
+                        driverPlate: driverData.plate,
+                        driverVehicle: driverData.vehicle
+                    });
+
+                    inputField.value = '';
+                }
+            } catch (error) {
+                console.error("Failed to send message: ", error);
+                alert("Failed to send message. Check your connection.");
+            }
+        };
+
+        // 4. DECLINE RIDE HANDLER
+        window.declineRide = async function(rideId) {
+            const driverData = JSON.parse(localStorage.getItem('oje_driver'));
+            if (!driverData) return;
+
+            try {
+                const rideRef = doc(db, "rides", rideId);
+                await updateDoc(rideRef, {
+                    status: "declined",
+                    driverPhone: driverData.phone,
+                    driverName: driverData.name
+                });
+                window.closeRideChat();
+            } catch (error) {
+                console.error("Failed to decline ride: ", error);
+                alert("Failed to decline ride. Check your connection.");
+            }
+        };
+
+        // 5. SECURE DRIVER HISTORY (MY RIDES) WITH DATE FILTERING & RATINGS
+        let currentDriverRides = [];
+
+        window.loadDriverHistory = async function(driverPhone) {
+            if (!driverPhone) return;
+
+            const container = document.getElementById('driverHistoryContainer');
+            if (!container) return;
+
+            container.innerHTML = `<p style="text-align:center; color:var(--text-muted); font-size:13px;">Loading history...</p>`;
+
+            try {
+                const snapshot = await getDocs(collection(db, "rides"));
+                currentDriverRides = [];
+
+                snapshot.forEach((docSnap) => {
+                    const ride = { id: docSnap.id, ...docSnap.data() };
+                    if (ride.driverPhone === driverPhone || ride.status === 'declined') {
+                        currentDriverRides.push(ride);
+                    }
+                });
+
+                currentDriverRides.sort((a, b) => {
+                    const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+                    const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+                    return timeB - timeA;
+                });
+
+                renderFilteredDriverHistory();
+            } catch (error) {
+                console.error("Error loading history:", error);
+                container.innerHTML = `<p style="text-align:center; color:#ef4444; font-size:13px;">Failed to load history.</p>`;
+            }
+        };
+
+        window.renderFilteredDriverHistory = function() {
+            const container = document.getElementById('driverHistoryContainer');
+            if (!container) return;
+            container.innerHTML = "";
+
+            const selectedDate = document.getElementById('driverHistoryDateFilter')?.value || '';
+
+            const filteredRides = currentDriverRides.filter(ride => {
+                if (selectedDate && ride.createdAt) {
+                    const rideDate = ride.createdAt?.toDate ? ride.createdAt.toDate().toISOString().split('T')[0] : '';
+                    if (rideDate !== selectedDate) return false;
+                }
+                return true;
+            });
+
+            if (filteredRides.length === 0) {
+                container.innerHTML = `
+                    <p style="text-align:center; color:var(--text-muted); font-size:13px; line-height:1.6;">
+                        No rides found for this date or history yet.<br>Rides you accept or decline will appear here!
+                    </p>`;
+                return;
+            }
+
+            filteredRides.forEach((ride) => {
+                const isDeclined = ride.status === 'declined';
+                const isCompleted = ride.status === 'completed';
+                
+                let badgeColor = '#38bdf8';
+                let statusLabel = (ride.status || 'pending').toUpperCase();
+                if (isDeclined) { badgeColor = '#ef4444'; }
+                if (isCompleted) { badgeColor = '#10b981'; }
+
+                let ratingHtml = '';
+                if (isCompleted) {
+                    if (ride.rating) {
+                        ratingHtml = `<p style="margin:8px 0 0 0; font-size:12px; color:var(--accent-gold); font-weight:bold;">Passenger Rating: ${'★'.repeat(ride.rating)}${'☆'.repeat(5 - ride.rating)} (${ride.rating}/5)</p>`;
+                    } else {
+                        ratingHtml = `<p style="margin:8px 0 0 0; font-size:12px; color:var(--text-muted); font-style:italic;">Awaiting passenger rating...</p>`;
+                    }
+                }
+
+                const item = document.createElement('div');
+                item.className = "card";
+                item.style.marginBottom = "10px";
+                item.style.marginTop = "0";
+
+                item.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                        <span style="font-weight:700; color:var(--primary); font-size:13px;">${ride.passengerName || 'Passenger'}</span>
+                        <span style="font-size:11px; font-weight:700; color:${badgeColor};">${statusLabel}</span>
+                    </div>
+                    <p style="margin:2px 0; font-size:12px; color:var(--text-muted);"><strong>Route:</strong> ${ride.pickup} ➔ ${ride.dropoff}</p>
+                    <p style="margin:2px 0; font-size:12px; color:var(--primary);"><strong>Fare:</strong> ₦${Number(ride.proposedFare || 0).toLocaleString()}</p>
+                    ${ratingHtml}
+                    ${ride.status === 'accepted' ? `<button type="button" onclick="completeRide('${ride.id}')" style="width:100%; margin-top:10px; background:#10b981; color:#020617; border:none; padding:8px; border-radius:8px; font-weight:700; font-size:12px; cursor:pointer;">Mark as Completed</button>` : ''}
+                `;
+                container.appendChild(item);
+            });
+        };
+
+        window.acceptRide = async function(rideId) {
+            const driverData = JSON.parse(localStorage.getItem('oje_driver'));
+            if (!driverData) {
+                alert("Driver profile missing. Please register first.");
+                return;
+            }
+
+            try {
+                const rideRef = doc(db, "rides", rideId);
+                await updateDoc(rideRef, {
+                    status: "accepted",
+                    driverName: driverData.name,
+                    driverPhone: driverData.phone,
+                    driverPlate: driverData.plate,
+                    driverVehicle: driverData.vehicle
+                });
+                alert("Ride accepted successfully!");
+                switchTab('history');
+            } catch (error) {
+                console.error("Firebase update failed: ", error);
+                alert("Failed to accept ride. Check your connection.");
+            }
+        };
+
+        window.completeRide = async function(rideId) {
+            try {
+                const rideRef = doc(db, "rides", rideId);
+                await updateDoc(rideRef, {
+                    status: "completed"
+                });
+                alert("Ride marked as completed!");
+                const d = JSON.parse(localStorage.getItem('oje_driver'));
+                if (d) loadDriverHistory(d.phone);
+            } catch (error) {
+                console.error("Failed to complete ride:", error);
+                alert("Failed to update status.");
+            }
+        };
+
+        // FACE VERIFICATION HANDLERS
+        window.handleImageUpload = function(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    window.capturedFaceData = e.target.result;
+                    const preview = document.getElementById('facePreview');
+                    preview.src = window.capturedFaceData;
+                    preview.style.display = 'block';
+                    document.getElementById('faceVerifiedBadge').style.display = 'inline-block';
+                };
+                reader.readAsDataURL(file);
+            }
+        };
+
+        window.startCamera = async function() {
+            const video = document.getElementById('webcamVideo');
+            const cameraBox = document.getElementById('cameraBox');
+            try {
+                webcamStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+                video.srcObject = webcamStream;
+                cameraBox.style.display = 'block';
+            } catch (err) {
+                alert("Camera permissions blocked. Please use the 'Upload Photo' button instead.");
+            }
+        };
+
+        window.capturePhoto = function() {
+            const video = document.getElementById('webcamVideo');
+            const canvas = document.getElementById('faceCanvas');
+            const preview = document.getElementById('facePreview');
+                        const context = canvas.getContext('2d');
+
+            canvas.width = video.videoWidth || 300;
+            canvas.height = video.videoHeight || 225;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            window.capturedFaceData = canvas.toDataURL('image/jpeg', 0.8);
+            preview.src = window.capturedFaceData;
+            preview.style.display = 'block';
+
+            if (webcamStream) {
+                webcamStream.getTracks().forEach(track => track.stop());
+            }
+            document.getElementById('cameraBox').style.display = 'none';
+            document.getElementById('faceVerifiedBadge').style.display = 'inline-block';
+        };
+
+        window.registerDriverProfile = async function() {
+            const name = document.getElementById('driverName').value.trim();
+            const phone = document.getElementById('driverPhone').value.trim();
+            const plate = document.getElementById('driverPlate').value.trim().toUpperCase();
+            const vehicle = document.getElementById('driverVehicle').value.trim();
+            const idNumber = document.getElementById('driverIdNumber').value.trim();
+            const facePhoto = window.capturedFaceData;
+
+            if (!name || !phone || !plate || !vehicle || !idNumber) {
+                alert("Please fill in all required contact, vehicle, and driver's license details.");
+                return;
+            }
+
+            if (!facePhoto && !localStorage.getItem('oje_driver')) {
+                alert("Please complete the Face Verification photo step before saving.");
+                return;
+            }
+
+            try {
+                const driverData = {
+                    name,
+                    phone,
+                    plate,
+                    vehicle,
+                    idType: "Driver License",
+                    idNumber,
+                    faceVerified: true,
+                    facePhoto: facePhoto || ''
+                };
+
+                localStorage.setItem('oje_driver', JSON.stringify(driverData));
+                await setDoc(doc(db, "drivers", phone), driverData, { merge: true });
+
+                alert("Profile verified & saved successfully!");
+                openHub(driverData);
+            } catch (e) {
+                console.error("Error saving driver: ", e);
+                alert("Registration failed. Check connection.");
+            }
+        };
+
+        function openHub(driver) {
+            document.getElementById('driverRegSection').style.display = 'none';
+            document.getElementById('ridesSection').style.display = 'block';
+            document.getElementById('driverInfoBadge').innerText = `${driver.name} | Plate: ${driver.plate}`;
+            listenToLiveFeed();
+            loadDriverHistory(driver.phone);
+        }
+
+        window.switchTab = function(tabName) {
+            document.getElementById('feedTabContent').style.display = tabName === 'feed' ? 'block' : 'none';
+            document.getElementById('historyTabContent').style.display = tabName === 'history' ? 'block' : 'none';
+            document.getElementById('profileTabContent').style.display = tabName === 'profile' ? 'block' : 'none';
+            
+            document.getElementById('btnFeedTab').className = tabName === 'feed' ? 'tab-btn active' : 'tab-btn';
+            document.getElementById('btnHistoryTab').className = tabName === 'history' ? 'tab-btn active' : 'tab-btn';
+            document.getElementById('btnProfileTab').className = tabName === 'profile' ? 'tab-btn active' : 'tab-btn';
+
+            if (tabName === 'history') {
+                const d = JSON.parse(localStorage.getItem('oje_driver'));
+                if (d) loadDriverHistory(d.phone);
+            } else if (tabName === 'profile') {
+                const d = JSON.parse(localStorage.getItem('oje_driver'));
+                if (d) {
+                    document.getElementById('profileDetails').innerHTML = `
+                        ${d.facePhoto ? `<div style="text-align:center; margin-bottom:12px;"><img src="${d.facePhoto}" style="width:90px; height:90px; border-radius:50%; border:2px solid var(--primary); object-fit:cover;"></div>` : ''}
+                        <p style="margin:8px 0; font-size:14px;"><strong>Full Name:</strong> ${d.name}</p>
+                        <p style="margin:8px 0; font-size:14px;"><strong>Phone Number:</strong> ${d.phone}</p>
+                        <p style="margin:8px 0; font-size:14px;"><strong>Vehicle Model &amp; Color:</strong> ${d.vehicle}</p>
+                        <p style="margin:8px 0; font-size:14px; color:var(--primary);"><strong>License Plate Number:</strong> ${d.plate}</p>
+                        <p style="margin:8px 0; font-size:14px;"><strong>Driver's License No:</strong> ${d.idNumber || 'Verified'}</p>
+                        <p style="margin:8px 0; font-size:14px; color:#2ecc71;"><strong>Face Biometrics:</strong> Verified ✓</p>
+                        <button class="primary-btn" style="margin-top:15px; background:rgba(16,185,129,0.1); color:var(--primary); border:1px solid var(--border);" onclick="populateEditForm()">Edit Credentials</button>
+                    `;
+                }
+            }
+        };
+
+        window.populateEditForm = function() {
+            const d = JSON.parse(localStorage.getItem('oje_driver'));
+            if(d) {
+                document.getElementById('driverName').value = d.name;
+                document.getElementById('driverPhone').value = d.phone;
+                document.getElementById('driverVehicle').value = d.vehicle;
+                document.getElementById('driverPlate').value = d.plate;
+                if(d.idNumber) document.getElementById('driverIdNumber').value = d.idNumber;
+                if(d.facePhoto) {
+                    window.capturedFaceData = d.facePhoto;
+                    document.getElementById('facePreview').src = d.facePhoto;
+                    document.getElementById('facePreview').style.display = 'block';
+                    document.getElementById('faceVerifiedBadge').style.display = 'inline-block';
+                }
+            }
+            document.getElementById('ridesSection').style.display = 'none';
+            document.getElementById('driverRegSection').style.display = 'block';
+            document.getElementById('driverRegTitle').innerText = "Update Driver Credentials";
+        };
+
+        window.logoutDriver = function() {
+            localStorage.removeItem('oje_driver');
+            if (webcamStream) {
+                webcamStream.getTracks().forEach(track => track.stop());
+            }
+            document.getElementById('ridesSection').style.display = 'none';
+            document.getElementById('driverRegSection').style.display = 'block';
+            document.getElementById('driverRegTitle').innerText = "Driver Registration";
+            document.getElementById('driverName').value = '';
+            document.getElementById('driverPhone').value = '';
+            document.getElementById('driverVehicle').value = '';
+            document.getElementById('driverPlate').value = '';
+            document.getElementById('driverIdNumber').value = '';
+            document.getElementById('facePreview').style.display = 'none';
+            window.capturedFaceData = null;
+        };
+    </script>
+
+    <style>
+        :root {
+            --bg-deep: #020617;
+            --surface: rgba(15, 23, 42, 0.75);
+            --border: rgba(16, 185, 129, 0.25);
+            --primary: #10b981;
+            --accent-gold: #fbbf24;
+            --text-main: #ffffff;
+            --text-muted: #94a3b8;
+        }
+        body { font-family: 'Inter', sans-serif; background: radial-gradient(circle at 50% 20%, #0f172a 0%, #020617 100%); background-attachment: fixed; color: var(--text-main); margin: 0; padding: 20px; min-height: 100vh; }
+        .content { max-width: 420px; margin: auto; }
+        .card { background: var(--surface); backdrop-filter: blur(16px); border: 1px solid var(--border); padding: 24px; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); margin-top: 10px; }
+        h2 { color: var(--primary); text-align: center; margin-bottom: 2px; font-size: 28px; }
+        p.subtitle { text-align: center; font-size: 12px; color: var(--text-muted); margin-top: 0; margin-bottom: 20px; text-transform: uppercase; }
+        label { display: block; margin-top: 15px; font-size: 13px; font-weight: 600; color: var(--text-muted); }
+        input, select { width: 100%; padding: 12px 14px; margin-top: 6px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(2, 6, 23, 0.8); color: var(--text-main); box-sizing: border-box; font-size: 14px; outline: none; }
+        button.primary-btn { width: 100%; background: linear-gradient(135deg, #10b981 0%, #0284c7 100%); color: #ffffff; padding: 14px; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; margin-top: 20px; cursor: pointer; box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3); }
+        .crazy-font { font-family: Permanent Marker, cursive, sans-serif; letter-spacing: 1px; transform: rotate(-2deg); display: inline-block; }
+        .tab-btn { flex: 1; padding: 10px 4px; background: rgba(2, 6, 23, 0.8); color: var(--text-muted); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; font-weight: 600; font-size: 11px; cursor: pointer; text-align: center; }
+        .tab-btn.active { background: var(--primary); color: #020617; border-color: var(--primary); font-weight: 700; }
+        .verify-badge { display: inline-block; background: rgba(46, 204, 113, 0.15); color: #2ecc71; border: 1px solid #2ecc71; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; margin-top: 8px; }
+    </style>
+</head>
+<body>
+<div class="content">
+    <h2 class="crazy-font" style="width:100%; text-align:center;">Ọje Mba</h2>
+    <p class="subtitle">Driver &amp; Dispatch Security Hub</p>
+
+    <!-- Driver Registration Form -->
+    <div id="driverRegSection" class="card">
+        <h3 id="driverRegTitle" style="color:var(--primary); margin-top:0; font-size:20px; text-align:center;">Driver Verification &amp; Registration</h3>
+        <p style="font-size:12px; color:var(--text-muted); text-align:center;">Complete security verification to enter the dispatch hub.</p>
+
+        <label>Full Name:</label>
+        <input type="text" id="driverName" placeholder="e.g., Emeka Johnson">
+
+        <label>Phone Number:</label>
+        <input type="tel" id="driverPhone" placeholder="e.g., 08088888888">
+
+        <label>Vehicle Model &amp; Color:</label>
+        <input type="text" id="driverVehicle" placeholder="e.g., Lexus 350 (Black)">
+
+        <label>License Plate Number:</label>
+        <input type="text" id="driverPlate" placeholder="e.g., ABC-450KYC" style="text-transform:uppercase;">
+
+        <label>Driver's License Number:</label>
+        <input type="text" id="driverIdNumber" placeholder="e.g., ABC12345678A">
+
+        <!-- Face Verification Section -->
+        <label>Face Biometric Verification:</label>
+        <div style="margin-top:8px; text-align:center; display:flex; gap:8px;">
+            <input type="file" id="cameraFileInput" accept="image/*" capture="user" style="display:none;" onchange="handleImageUpload(event)">
+            <button type="button" onclick="document.getElementById('cameraFileInput').click()" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid var(--border); color:#fff; padding:10px 6px; border-radius:10px; font-size:12px; cursor:pointer;">
+                📁 Upload Photo
+            </button>
+            <button type="button" onclick="startCamera()" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid var(--border); color:#fff; padding:10px 6px; border-radius:10px; font-size:12px; cursor:pointer;">
+                📷 Snap Live
+            </button>
+        </div>
+
+        <div id="cameraBox" style="display:none; margin-top:12px; background:#000; border-radius:12px; padding:10px; border:1px solid var(--border);">
+            <video id="webcamVideo" autoplay playsinline style="width:100%; height:auto; border-radius:8px;"></video>
+            <button type="button" onclick="capturePhoto()" class="primary-btn" style="margin-top:8px; padding:10px; font-size:13px;">Capture Photo</button>
+        </div>
+
+        <canvas id="faceCanvas" style="display:none;"></canvas>
+        <div style="text-align:center;">
+            <img id="facePreview" style="display:none; margin:12px auto 0 auto; width:100px; height:100px; border-radius:50%; border:2px solid var(--primary); object-fit:cover;" />
+            <span id="faceVerifiedBadge" class="verify-badge" style="display:none;">Face Captured ✓</span>
+        </div>
+
+        <button class="primary-btn" onclick="registerDriverProfile()">Save &amp; Verify Profile</button>
+    </div>
+
+    <!-- Live Rides Feed & Profile Hub -->
+    <div id="ridesSection" style="display:none;">
+        <div class="card" style="margin-bottom:15px; padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <span style="font-size:11px; color:var(--text-muted); display:block;">Logged Driver:</span>
+                <span id="driverInfoBadge" style="font-size:13px; font-weight:bold; color:var(--primary);">---</span>
+            </div>
+            <button onclick="logoutDriver()" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:var(--text-muted); padding:6px 10px; border-radius:6px; font-size:11px; cursor:pointer;">Log Out</button>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <div style="display:flex; gap:6px; margin-bottom:15px;">
+            <button id="btnFeedTab" class="tab-btn active" onclick="switchTab('feed')">📡 Live Feed</button>
+            <button id="btnHistoryTab" class="tab-btn" onclick="switchTab('history')">🕒 My Rides</button>
+            <button id="btnProfileTab" class="tab-btn" onclick="switchTab('profile')">👤 Profile</button>
+        </div>
+
+        <!-- Tab 1: Feed -->
+        <div id="feedTabContent">
+            <div id="ridesContainer">
+                <p style="text-align:center; color:var(--text-muted); font-size:13px;">Listening for ride requests...</p>
+            </div>
+        </div>
+
+        <!-- Tab 2: Secure Driver History -->
+        <div id="historyTabContent" style="display:none;">
+            <div class="card" style="margin-top:0;">
+                <h3 style="margin-top:0; color:var(--primary); font-size:18px; text-align:center;">My Accepted &amp; History Rides</h3>
+                
+                <!-- Date Filter & Clear Controls -->
+                <div style="margin-bottom: 12px; display: flex; gap: 6px; align-items: center;">
+                    <input type="date" id="driverHistoryDateFilter" onchange="renderFilteredDriverHistory()" style="flex:1; padding:8px; font-size:12px; border-radius:8px;">
+                    <button type="button" onclick="document.getElementById('driverHistoryDateFilter').value=''; renderFilteredDriverHistory()" style="background:rgba(255,255,255,0.1); color:#fff; border:none; padding:8px 12px; border-radius:8px; font-size:11px; cursor:pointer;">Clear Date</button>
+                </div>
+
+                <div id="driverHistoryContainer">
+                    <p style="text-align:center; color:var(--text-muted); font-size:13px;">Loading your history...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 3: Profile -->
+        <div id="profileTabContent" style="display:none;">
+            <div class="card" style="margin-top:0;">
+                <h3 style="margin-top:0; color:var(--primary); font-size:18px; text-align:center;">Driver Credentials</h3>
+                <div id="profileDetails"></div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
